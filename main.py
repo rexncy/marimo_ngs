@@ -1,18 +1,3 @@
-# /// script
-# requires-python = ">=3.12"
-# dependencies = [
-#     "fastapi",
-#     "marimo",
-#     "starlette",
-#     "jinja2",
-#     "itsdangerous",
-#     "python-dotenv",
-#     "python-multipart",
-#     "passlib",
-#     "pydantic",
-#     "vega-datasets==0.9.0",
-# ]
-# ///
 from typing import Callable, Coroutine
 from fastapi import FastAPI, Request, Response, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
@@ -51,7 +36,7 @@ app = FastAPI()
 # Set up Jinja2 templates
 templates = Jinja2Templates(directory=templates_dir)
 # Simulated user database (replace with a real database in production)
-users = {"admin": "@Dmin+2025", "ao": "@O+2025"}
+users = {"admin": "@Dmin+2025", "ao": "@O+2025", "uat":"uat"}
 
 
 class LoginForm(BaseModel):

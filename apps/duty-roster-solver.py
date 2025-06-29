@@ -48,6 +48,9 @@ def _(mo):
         *   **R6: Consistency of Day Shifts**
             The solver should try to assign as few different types of "D" shifts as possible to the same ambulance. The importance of this goal is controlled by the "D-Shift Consistency Priority" slider in the user interface.
 
+        *   **R7: Consistency of Night Shifts**
+            The solver should try to assign as few different types of "N" shifts as possible to the same ambulance. The importance of this goal is controlled by the "N-Shift Consistency Priority" slider in the user interface.
+
     ///
     """
     )
@@ -108,19 +111,20 @@ def _(FILE_DIR, Path, file_browser, file_uploader, io, mo, pd):
 
     if _excel_file is not None:
         # Read and process data
-        df_input = pd.read_excel(_excel_file, sheet_name='INPUT', usecols="A:C")
+        df_input = pd.read_excel(_excel_file, sheet_name='INPUT')
         col_date = df_input.columns[0]
         df_input[col_date] = pd.to_datetime(df_input[col_date]).dt.date
 
         df_shifts = pd.read_excel(_excel_file, sheet_name='SHIFTS')
 
+        _tabs = mo.ui.tabs({
+            "INPUT Sheet": mo.ui.table(df_input),
+            "SHIFTS Sheet": mo.ui.table(df_shifts)
+        })
         # Display status and data
         data_display = mo.vstack([
             _file_status,
-            mo.md("**INPUT Sheet:**"),
-            mo.ui.table(df_input),
-            mo.md("**SHIFTS Sheet:**"),
-            mo.ui.table(df_shifts)
+            _tabs
         ])
     else:
         data_display = _file_status
@@ -132,6 +136,30 @@ def _(FILE_DIR, Path, file_browser, file_uploader, io, mo, pd):
 
 @app.cell
 def _(df_input, df_shifts, mo):
+    input_error = False
+    if df_input is not None and df_shifts is not None:
+        input_shifts = set(df_input['Shift'].unique())
+        shifts_shifts = set(df_shifts['Shift'].unique())
+        invalid_shifts = input_shifts - shifts_shifts
+
+        if invalid_shifts:
+            input_error = True
+            validation_msg = mo.md(
+                f"❌ **Validation Error:** The following shifts in INPUT are not defined in the SHIFTS sheet: "
+                f"`{', '.join(sorted(invalid_shifts))}`"
+            )
+        else:
+            validation_msg = mo.md("✅ All shift codes in INPUT are valid and defined in the SHIFTS sheet.")
+    else:
+        validation_msg = mo.md("*Load both INPUT and SHIFTS sheets to validate shift codes.*")
+
+    validation_msg
+
+    return (input_error,)
+
+
+@app.cell
+def _(df_input, df_shifts, input_error, mo):
     # cell 4: Solver Settings
     # Define the state variable to track if the solver is running.
     get_solving, set_solving = mo.state(False)
@@ -141,6 +169,17 @@ def _(df_input, df_shifts, mo):
         label="Total ambulances available:"
     )
 
+    # Division selector (only if present)
+    if df_input is not None and "Division" in df_input.columns:
+        division_values = sorted(df_input["Division"].dropna().unique())
+        division_selector = mo.ui.dropdown(
+            options=division_values,
+            value=division_values[0] if division_values else None,
+            label="Select Division:"
+        )
+    else:
+        division_selector = None
+
     # The run_button is disabled when get_solving() is True.
     run_button = mo.ui.run_button(
         label="🚀 Generate Schedule",
@@ -148,39 +187,60 @@ def _(df_input, df_shifts, mo):
     )
 
     # --- Priority Sliders for Soft Constraints ---
-    mo.md("### Solver Priorities")
-
-    # R5 Fairness Slider - with a high default value (100)
     r5_fairness_slider = mo.ui.slider(
-        1, 200, value=100, 
+        1, 200, value=150, 
         label="Tough Shift Fairness (R5) Priority:"
     )
-
-    # R6 Consistency Slider - with a low default value (1)
     r6_consistency_slider = mo.ui.slider(
         1, 50, value=1, 
         label="D-Shift Consistency (R6) Priority:"
     )
 
+    r7_consistency_slider = mo.ui.slider(
+        1, 50, value=1,  # Very low default value
+        label="N-Shift Consistency (R7) Priority:"
+    )
+
+    # Compose the controls stack
+    controls_list = [number_of_amb_input]
+    if division_selector is not None:
+        controls_list.append(division_selector)
+    controls_list.append(run_button)
+    controls_list.append(mo.md("---"))
+    controls_list.append(r5_fairness_slider)
+    controls_list.append(r6_consistency_slider)
+    controls_list.append(r7_consistency_slider)
+
+
     if df_input is not None and df_shifts is not None:
-        solver_controls = mo.vstack([
-            mo.hstack([number_of_amb_input, run_button]),
-            mo.md("---"),
-            r5_fairness_slider,
-            r6_consistency_slider
-        ])
+        solver_controls = mo.vstack(controls_list)
     else:
         solver_controls = mo.md("*Solver controls will appear after loading data*")
-    solver_controls
+
+    mo.md("input_error") if input_error else solver_controls
+
 
     return (
+        division_selector,
         get_solving,
         number_of_amb_input,
         r5_fairness_slider,
         r6_consistency_slider,
+        r7_consistency_slider,
         run_button,
         set_solving,
     )
+
+
+@app.cell
+def _(df_input, division_selector):
+    # Filtered INPUT DataFrame
+    if df_input is not None and division_selector is not None and division_selector.value is not None:
+        df_input_filtered = df_input[df_input["Division"] == division_selector.value].reset_index(drop=True)
+    else:
+        df_input_filtered = df_input
+
+    return (df_input_filtered,)
 
 
 @app.cell
@@ -189,7 +249,7 @@ def _(
     compute_problem_complexity,
     cp_model,
     defaultdict,
-    df_input,
+    df_input_filtered,
     df_shifts,
     get_solving,
     mo,
@@ -197,6 +257,7 @@ def _(
     pd,
     r5_fairness_slider,
     r6_consistency_slider,
+    r7_consistency_slider,
     run_button,
     set_solving,
     timedelta,
@@ -212,21 +273,21 @@ def _(
     # ------------------------------------------------------------------------
 
     if (run_button.value and not get_solving() and 
-        df_input is not None and df_shifts is not None and 
+        df_input_filtered is not None and df_shifts is not None and 
         number_of_amb_input.value > 0):
-    
+
         try:
             set_solving(True)
             mo.output.replace(mo.md("🔄 **Solving with optimized logic...**"))
 
             # === DATA PREPARATION ===
-            _dates = sorted(df_input[col_date].unique())
+            _dates = sorted(df_input_filtered[col_date].unique())
             _shifts = df_shifts['Shift'].tolist() + ['O']
             _ambulances = list(range(1, number_of_amb_input.value + 1))
             _num_ambulances = len(_ambulances)
             _shift_attrs = {row['Shift']: {'type': row['Type'], 'flexible': row['Flexible'], 'delta': row['Working_Hour_Delta'], 'base_hours': row['Working_Hour']} for _, row in df_shifts.iterrows()}
             _shift_attrs['O'] = {'type': 'O', 'flexible': False, 'delta': 0, 'base_hours': 0}
-            _demand = {(_row[col_date], _row['Shift']): _row['DAA'] for _, _row in df_input.iterrows()}
+            _demand = {(_row[col_date], _row['Shift']): _row['DAA'] for _, _row in df_input_filtered.iterrows()}
             _weeks = defaultdict(list)
             for _d in _dates: _weeks[_d - timedelta(days=_d.weekday())].append(_d)
 
@@ -269,18 +330,27 @@ def _(
             # === SOFT CONSTRAINTS (R5 and R6) ===
             _objective_terms = []
 
-            # === R5: Fairness of Tough Shifts (Squared Deviation, Hints, Tight Bounds) ===
-            _tough_shifts = ['H', 'N']
+             # === R5: Fairness of Tough Shifts (Squared Deviation, Hints, Tight Bounds) ===
+        
+            # Dynamically determine all shift codes of type "N" from the SHIFTS sheet
+            _tough_shifts = [row['Shift'] for _, row in df_shifts.iterrows() if row['Type'] == 'N']
+        
             _total_tough_shifts_to_assign = sum(_demand.get((_d, _s), 0) for _d in _dates for _s in _tough_shifts)
             min_tough = _total_tough_shifts_to_assign // _num_ambulances
             max_tough = min_tough + 1 if _total_tough_shifts_to_assign % _num_ambulances else min_tough
+        
             _tough_shift_counts = [
                 _model.NewIntVar(min_tough, max_tough, f'tough_count_{_a}') for _a in _ambulances
             ]
+        
             for _a_idx, _a in enumerate(_ambulances):
-                _model.Add(_tough_shift_counts[_a_idx] == sum(_assign[(_d, _a, _s)] for _d in _dates for _s in _tough_shifts))
+                _model.Add(_tough_shift_counts[_a_idx] == sum(
+                    _assign[(_d, _a, _s)] for _d in _dates for _s in _tough_shifts
+                ))
+        
             for _count_var in _tough_shift_counts:
                 _model.AddHint(_count_var, min_tough)
+        
             fairness_sq_devs = []
             for _count_var in _tough_shift_counts:
                 _diff = _model.NewIntVar(-max_tough, max_tough, f'diff_{_count_var.Name()}')
@@ -288,6 +358,7 @@ def _(
                 _sq_dev = _model.NewIntVar(0, max_tough * max_tough, f'sq_dev_{_count_var.Name()}')
                 _model.AddMultiplicationEquality(_sq_dev, [_diff, _diff])
                 fairness_sq_devs.append(_sq_dev)
+        
             _objective_terms.append(r5_fairness_slider.value * sum(fairness_sq_devs))
 
             # === R6: Consistency of Day Shifts (Soft) ===
@@ -306,11 +377,27 @@ def _(
             _model.AddDecisionStrategy(assign_vars, cp_model.CHOOSE_FIRST, cp_model.SELECT_MIN_VALUE)
 
            # === SHOW PROBLEM COMPLEXITY ===
-            complexity = compute_problem_complexity(_dates, _shifts, _ambulances, _shift_attrs, df_input)
+            complexity = compute_problem_complexity(_dates, _shifts, _ambulances, _shift_attrs, df_input_filtered)
             mo.output.replace(mo.vstack([
                 mo.md("🔄 **Solving...**"),
                 complexity,
             ]))
+
+            # === R7: Consistency of N Shifts (Soft) ===
+            # Penalize ambulances for being assigned more than one type of "N" shift
+        
+            if r7_consistency_slider is not None:
+                # Find all shift codes of type "N"
+                n_shift_types = [s for s, attrs in _shift_attrs.items() if attrs['type'] == 'N']
+                for _a in _ambulances:
+                    n_shifts_for_this_amb = []
+                    for n_shift in n_shift_types:
+                        _is_used = _model.NewBoolVar(f'usedN_{_a}_{n_shift}')
+                        _model.Add(sum(_assign[(_d, _a, n_shift)] for _d in _dates) > 0).OnlyEnforceIf(_is_used)
+                        _model.Add(sum(_assign[(_d, _a, n_shift)] for _d in _dates) == 0).OnlyEnforceIf(_is_used.Not())
+                        n_shifts_for_this_amb.append(_is_used)
+                    # Penalize using more than one type of N shift
+                    _objective_terms.append(r7_consistency_slider.value * (sum(n_shifts_for_this_amb) - 1))
 
 
             # === Solve (with parallelism) ===
@@ -346,7 +433,7 @@ def _(
 
         finally:
             set_solving(False)
-        
+
     elif not get_solving():
         schedule_result = mo.md("*Click 'Generate Schedule' to solve*")
         df_schedule = None
@@ -389,11 +476,11 @@ def _(date, df_schedule, mo, pd, timedelta):
 
 
 @app.cell
-def _(df_input, df_schedule, mo, pd):
+def _(df_input_filtered, df_schedule, mo, pd):
     # cell 7: DAA Requirement Verification
-    if df_input is not None and df_schedule is not None and not df_schedule.empty:
+    if df_input_filtered is not None and df_schedule is not None and not df_schedule.empty:
         _scheduled_counts = df_schedule.groupby(['Date', 'Shift']).size().reset_index(name='Scheduled')
-        _daa_summary_df = pd.merge(df_input, _scheduled_counts, on=['Date', 'Shift'], how='left')
+        _daa_summary_df = pd.merge(df_input_filtered, _scheduled_counts, on=['Date', 'Shift'], how='left')
         _daa_summary_df['Scheduled'] = _daa_summary_df['Scheduled'].fillna(0).astype(int)
         def _determine_status(row):
             if row['Scheduled'] == row['DAA']: return '✅ Exactly Met'

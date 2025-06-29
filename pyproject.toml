@@ -9,6 +9,7 @@ dependencies = [
     "fastapi>=0.115.13",
     "jinja2>=3.1.6",
     "marimo>=0.14.7",
+    "matplotlib>=3.10.3",
     "numpy>=2.3.1",
     "openpyxl>=3.1.5",
     "ortools>=9.14.6206",
@@ -16,4 +17,5 @@ dependencies = [
     "pulp>=3.2.1",
     "pyarrow>=20.0.0",
     "python-multipart>=0.0.20",
+    "xlsxwriter>=3.2.5",
 ]

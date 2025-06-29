@@ -63,7 +63,6 @@ def _(Path, mo):
         initial_path=Path(FILE_DIR),
         filetypes=[".xlsx"],
         restrict_navigation=True,
-        multiple=False,
         label="Select an existing roster file:"
     )
 
@@ -201,24 +200,15 @@ def _(
     set_solving,
     timedelta,
 ):
-    # cell 5: Core Solver Logic (Optimized)
-    # ------------------------------------------------------------------------
-    # OPTIMIZATIONS APPLIED:
-    # - R5 fairness uses squared deviation (faster for CP-SAT than abs deviation)
-    # - Tight bounds and AddHint for fairness variables
-    # - Decision strategy: assign variables in fixed order (CHOOSE_FIRST, SELECT_MIN_VALUE)
-    # - Parallel search: num_search_workers=4 (uses 4 CPU cores)
-    # - All other logic matches the 'stable' version
-    # ------------------------------------------------------------------------
-
+    # cell 5: Core Solver Logic (Optimized, with Complexity Metric)
     if (run_button.value and not get_solving() and 
         df_input is not None and df_shifts is not None and 
         number_of_amb_input.value > 0):
-    
-        try:
-            set_solving(True)
-            mo.output.replace(mo.md("🔄 **Solving with optimized logic...**"))
 
+        try:
+            # Disable the button and show a status message
+            set_solving(True)
+        
             # === DATA PREPARATION ===
             _dates = sorted(df_input[col_date].unique())
             _shifts = df_shifts['Shift'].tolist() + ['O']
@@ -243,18 +233,26 @@ def _(
             }
 
             # === HARD CONSTRAINTS (R1-R4) ===
+
+            # R1: Exactly Meet Demand
             for _d in _dates:
                 for _s in _shifts:
                     if _s != 'O' and (_d, _s) in _demand:
                         _model.Add(sum(_assign[(_d, _a, _s)] for _a in _ambulances) == _demand[(_d, _s)])
+
+            # R2: One Shift Per Day
             for _d in _dates:
                 for _a in _ambulances:
                     _model.Add(sum(_assign[(_d, _a, _s)] for _s in _shifts) == 1)
+
+            # R3: Night Shift Rest
             for _a in _ambulances:
                 for _i, _d in enumerate(_dates[:-1]):
                     _next_day = _dates[_i+1]
                     for _s in [_s for _s, attrs in _shift_attrs.items() if attrs['type'] == 'N']:
                         _model.AddBoolOr([_assign[(_d, _a, _s)].Not(), _assign[(_next_day, _a, 'O')]])
+
+            # R4: 48-Hour Work Week
             for _week_start, _week_dates in _weeks.items():
                 for _a in _ambulances:
                     _weekly_hours_expr = []
@@ -267,30 +265,44 @@ def _(
                     _model.Add(sum(_weekly_hours_expr) == 48)
 
             # === SOFT CONSTRAINTS (R5 and R6) ===
+
             _objective_terms = []
 
-            # === R5: Fairness of Tough Shifts (Squared Deviation, Hints, Tight Bounds) ===
+            # R5: Fairness of Tough Shifts (Soft, Very High Priority)
             _tough_shifts = ['H', 'N']
-            _total_tough_shifts_to_assign = sum(_demand.get((_d, _s), 0) for _d in _dates for _s in _tough_shifts)
-            min_tough = _total_tough_shifts_to_assign // _num_ambulances
-            max_tough = min_tough + 1 if _total_tough_shifts_to_assign % _num_ambulances else min_tough
-            _tough_shift_counts = [
-                _model.NewIntVar(min_tough, max_tough, f'tough_count_{_a}') for _a in _ambulances
-            ]
+            _tough_shift_counts = [_model.NewIntVar(0, len(_dates), f'tough_count_{_a}') for _a in _ambulances]
             for _a_idx, _a in enumerate(_ambulances):
-                _model.Add(_tough_shift_counts[_a_idx] == sum(_assign[(_d, _a, _s)] for _d in _dates for _s in _tough_shifts))
+                _model.Add(_tough_shift_counts[_a_idx] == sum(_assign[(_d, _a, _s)]
+                                                              for _d in _dates for _s in _tough_shifts))
+
+            _total_tough_shifts_to_assign = sum(_demand.get((_d, _s), 0)
+                                                for _d in _dates for _s in _tough_shifts)
+            if _num_ambulances > 0:
+                _min_tough = _total_tough_shifts_to_assign // _num_ambulances
+                _max_tough = _min_tough + 1 if _total_tough_shifts_to_assign % _num_ambulances else _min_tough
+                # Tighten variable bounds to reduce search space
+                for i in range(_num_ambulances):
+                    _model.Add(_tough_shift_counts[i] >= _min_tough)
+                    _model.Add(_tough_shift_counts[i] <= _max_tough)
+
+            # Add hints
             for _count_var in _tough_shift_counts:
-                _model.AddHint(_count_var, min_tough)
+                _model.AddHint(_count_var, _min_tough)
+
+            # Penalize squared deviations for better solver performance
             fairness_sq_devs = []
             for _count_var in _tough_shift_counts:
-                _diff = _model.NewIntVar(-max_tough, max_tough, f'diff_{_count_var.Name()}')
-                _model.Add(_diff == _count_var - min_tough)
-                _sq_dev = _model.NewIntVar(0, max_tough * max_tough, f'sq_dev_{_count_var.Name()}')
+                _diff = _model.NewIntVar(-_max_tough, _max_tough, f'diff_{_count_var.Name()}')
+                _model.Add(_diff == _count_var - _min_tough)
+                _sq_dev = _model.NewIntVar(0, _max_tough * _max_tough, f'sq_dev_{_count_var.Name()}')
                 _model.AddMultiplicationEquality(_sq_dev, [_diff, _diff])
                 fairness_sq_devs.append(_sq_dev)
-            _objective_terms.append(r5_fairness_slider.value * sum(fairness_sq_devs))
 
-            # === R6: Consistency of Day Shifts (Soft) ===
+            # Use a high penalty weight for fairness
+            fairness_weight = r5_fairness_slider.value
+            _objective_terms.append(fairness_weight * sum(fairness_sq_devs))
+
+            # R6: Consistency of Day Shifts (Soft)
             if r6_consistency_slider is not None:
                 for _a in _ambulances:
                     _d_shifts_for_this_amb = []
@@ -301,24 +313,17 @@ def _(
                         _d_shifts_for_this_amb.append(_is_used)
                     _objective_terms.append(r6_consistency_slider.value * (sum(_d_shifts_for_this_amb) - 1))
 
-            # === Decision Strategy for Assignment Variables ===
-            assign_vars = [_assign[(_d, _a, _s)] for _d in _dates for _a in _ambulances for _s in _shifts]
-            _model.AddDecisionStrategy(assign_vars, cp_model.CHOOSE_FIRST, cp_model.SELECT_MIN_VALUE)
-
-           # === SHOW PROBLEM COMPLEXITY ===
+            # === SHOW PROBLEM COMPLEXITY ===
             complexity = compute_problem_complexity(_dates, _shifts, _ambulances, _shift_attrs, df_input)
             mo.output.replace(mo.vstack([
                 mo.md("🔄 **Solving...**"),
                 complexity,
             ]))
 
-
-            # === Solve (with parallelism) ===
-            if _objective_terms:
-                _model.Minimize(sum(_objective_terms))
+            # Solve
+            if _objective_terms: _model.Minimize(sum(_objective_terms))
             _solver = cp_model.CpSolver()
             _solver.parameters.max_time_in_seconds = 240.0
-            _solver.parameters.num_search_workers = 4  # Use 4 CPU cores for parallel search
             _status = _solver.Solve(_model)
 
             # === EXTRACT AND DISPLAY RESULTS ===
@@ -345,8 +350,9 @@ def _(
                 df_schedule = None
 
         finally:
+            # Re-enable the button when the process is done.
             set_solving(False)
-        
+
     elif not get_solving():
         schedule_result = mo.md("*Click 'Generate Schedule' to solve*")
         df_schedule = None

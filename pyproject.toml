@@ -17,5 +17,6 @@ dependencies = [
     "pulp>=3.2.1",
     "pyarrow>=20.0.0",
     "python-multipart>=0.0.20",
+    "ruff>=0.12.1",
     "xlsxwriter>=3.2.5",
 ]

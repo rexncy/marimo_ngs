@@ -67,21 +67,21 @@ def _(Path, mo):
         filetypes=[".xlsx"],
         restrict_navigation=True,
         multiple=False,
-        label="Select an existing roster file:"
+        label="Select an existing roster file:",
     )
 
     file_uploader = mo.ui.file(
-        filetypes=[".xlsx"],
-        label="Or upload your own roster file (.xlsx):"
+        filetypes=[".xlsx"], label="Or upload your own roster file (.xlsx):"
     )
 
-    file_input_tabs = mo.ui.tabs({
-        "Choose Existing": file_browser,
-        "Upload New": file_uploader,
-    })
+    file_input_tabs = mo.ui.tabs(
+        {
+            "Choose Existing": file_browser,
+            "Upload New": file_uploader,
+        }
+    )
 
     file_input_tabs
-
     return FILE_DIR, file_browser, file_uploader
 
 
@@ -105,32 +105,34 @@ def _(FILE_DIR, Path, file_browser, file_uploader, io, mo, pd):
         _file_status = mo.md(f"🟢 Using uploaded file: **{file_uploader.name()}**")
     elif file_browser.value:
         _excel_file = pd.ExcelFile(file_browser.path())
-        _file_status = mo.md(f"🟡 Using selected file: **{file_browser.path().name}**")
+        _file_status = mo.md(
+            f"🟡 Using selected file: **{file_browser.path().name}**"
+        )
     else:
-        _file_status = mo.md("⚠️ **Please select an existing file or upload your own roster file (.xlsx) to proceed!**")
+        _file_status = mo.md(
+            "⚠️ **Please select an existing file or upload your own roster file (.xlsx) to proceed!**"
+        )
 
     if _excel_file is not None:
         # Read and process data
-        df_input = pd.read_excel(_excel_file, sheet_name='INPUT')
+        df_input = pd.read_excel(_excel_file, sheet_name="INPUT")
         col_date = df_input.columns[0]
         df_input[col_date] = pd.to_datetime(df_input[col_date]).dt.date
 
-        df_shifts = pd.read_excel(_excel_file, sheet_name='SHIFTS')
+        df_shifts = pd.read_excel(_excel_file, sheet_name="SHIFTS")
 
-        _tabs = mo.ui.tabs({
-            "INPUT Sheet": mo.ui.table(df_input),
-            "SHIFTS Sheet": mo.ui.table(df_shifts)
-        })
+        _tabs = mo.ui.tabs(
+            {
+                "INPUT Sheet": mo.ui.table(df_input),
+                "SHIFTS Sheet": mo.ui.table(df_shifts),
+            }
+        )
         # Display status and data
-        data_display = mo.vstack([
-            _file_status,
-            _tabs
-        ])
+        data_display = mo.vstack([_file_status, _tabs])
     else:
         data_display = _file_status
 
     data_display
-
     return col_date, df_input, df_shifts
 
 
@@ -138,8 +140,8 @@ def _(FILE_DIR, Path, file_browser, file_uploader, io, mo, pd):
 def _(df_input, df_shifts, mo):
     input_error = False
     if df_input is not None and df_shifts is not None:
-        input_shifts = set(df_input['Shift'].unique())
-        shifts_shifts = set(df_shifts['Shift'].unique())
+        input_shifts = set(df_input["Shift"].unique())
+        shifts_shifts = set(df_shifts["Shift"].unique())
         invalid_shifts = input_shifts - shifts_shifts
 
         if invalid_shifts:
@@ -149,12 +151,15 @@ def _(df_input, df_shifts, mo):
                 f"`{', '.join(sorted(invalid_shifts))}`"
             )
         else:
-            validation_msg = mo.md("✅ All shift codes in INPUT are valid and defined in the SHIFTS sheet.")
+            validation_msg = mo.md(
+                "✅ All shift codes in INPUT are valid and defined in the SHIFTS sheet."
+            )
     else:
-        validation_msg = mo.md("*Load both INPUT and SHIFTS sheets to validate shift codes.*")
+        validation_msg = mo.md(
+            "*Load both INPUT and SHIFTS sheets to validate shift codes.*"
+        )
 
     validation_msg
-
     return (input_error,)
 
 
@@ -165,8 +170,11 @@ def _(df_input, df_shifts, input_error, mo):
     get_solving, set_solving = mo.state(False)
 
     number_of_amb_input = mo.ui.number(
-        start=1, stop=100, step=1, value=48,  # Default: 48 ambulances
-        label="Total ambulances available:"
+        start=1,
+        stop=100,
+        step=1,
+        value=48,  # Default: 48 ambulances
+        label="Total ambulances available:",
     )
 
     # Division selector (only if present)
@@ -175,30 +183,34 @@ def _(df_input, df_shifts, input_error, mo):
         division_selector = mo.ui.dropdown(
             options=division_values,
             value=division_values[0] if division_values else None,
-            label="Select Division:"
+            label="Select Division:",
         )
     else:
         division_selector = None
 
+    allow_double_nights_checkbox = mo.ui.checkbox(
+        value=False,
+        label="Allow double nights (permit two consecutive 'N' shifts, but not three)",
+    )
+
     # The run_button is disabled when get_solving() is True.
     run_button = mo.ui.run_button(
-        label="🚀 Generate Schedule",
-        disabled=get_solving()
+        label="🚀 Generate Schedule", disabled=get_solving()
     )
 
     # --- Priority Sliders for Soft Constraints ---
     r5_fairness_slider = mo.ui.slider(
-        1, 200, value=150, 
-        label="Tough Shift Fairness (R5) Priority:"
+        1, 200, value=150, label="Tough Shift Fairness (R5) Priority:"
     )
     r6_consistency_slider = mo.ui.slider(
-        1, 50, value=1, 
-        label="D-Shift Consistency (R6) Priority:"
+        1, 50, value=1, label="D-Shift Consistency (R6) Priority:"
     )
 
     r7_consistency_slider = mo.ui.slider(
-        1, 50, value=1,  # Very low default value
-        label="N-Shift Consistency (R7) Priority:"
+        1,
+        50,
+        value=1,  # Very low default value
+        label="N-Shift Consistency (R7) Priority:",
     )
 
     # Compose the controls stack
@@ -207,6 +219,7 @@ def _(df_input, df_shifts, input_error, mo):
         controls_list.append(division_selector)
     controls_list.append(run_button)
     controls_list.append(mo.md("---"))
+    controls_list.append(allow_double_nights_checkbox)
     controls_list.append(r5_fairness_slider)
     controls_list.append(r6_consistency_slider)
     controls_list.append(r7_consistency_slider)
@@ -218,9 +231,8 @@ def _(df_input, df_shifts, input_error, mo):
         solver_controls = mo.md("*Solver controls will appear after loading data*")
 
     mo.md("input_error") if input_error else solver_controls
-
-
     return (
+        allow_double_nights_checkbox,
         division_selector,
         get_solving,
         number_of_amb_input,
@@ -235,16 +247,22 @@ def _(df_input, df_shifts, input_error, mo):
 @app.cell
 def _(df_input, division_selector):
     # Filtered INPUT DataFrame
-    if df_input is not None and division_selector is not None and division_selector.value is not None:
-        df_input_filtered = df_input[df_input["Division"] == division_selector.value].reset_index(drop=True)
+    if (
+        df_input is not None
+        and division_selector is not None
+        and division_selector.value is not None
+    ):
+        df_input_filtered = df_input[
+            df_input["Division"] == division_selector.value
+        ].reset_index(drop=True)
     else:
         df_input_filtered = df_input
-
     return (df_input_filtered,)
 
 
 @app.cell
 def _(
+    allow_double_nights_checkbox,
     col_date,
     compute_problem_complexity,
     cp_model,
@@ -269,143 +287,282 @@ def _(
     # - Tight bounds and AddHint for fairness variables
     # - Decision strategy: assign variables in fixed order (CHOOSE_FIRST, SELECT_MIN_VALUE)
     # - Parallel search: num_search_workers=4 (uses 4 CPU cores)
-    # - All other logic matches the 'stable' version
+    # - Configurable double nights (R3) with correct "O" after double "N"
+    # - R5, R6, R7 soft constraints
+    # - Problem complexity display and infeasibility reason reporting
     # ------------------------------------------------------------------------
 
-    if (run_button.value and not get_solving() and 
-        df_input_filtered is not None and df_shifts is not None and 
-        number_of_amb_input.value > 0):
-
+    if (
+        run_button.value
+        and not get_solving()
+        and df_input_filtered is not None
+        and df_shifts is not None
+        and number_of_amb_input.value > 0
+    ):
         try:
             set_solving(True)
             mo.output.replace(mo.md("🔄 **Solving with optimized logic...**"))
 
             # === DATA PREPARATION ===
             _dates = sorted(df_input_filtered[col_date].unique())
-            _shifts = df_shifts['Shift'].tolist() + ['O']
+            _shifts = df_shifts["Shift"].tolist() + ["O"]
             _ambulances = list(range(1, number_of_amb_input.value + 1))
             _num_ambulances = len(_ambulances)
-            _shift_attrs = {row['Shift']: {'type': row['Type'], 'flexible': row['Flexible'], 'delta': row['Working_Hour_Delta'], 'base_hours': row['Working_Hour']} for _, row in df_shifts.iterrows()}
-            _shift_attrs['O'] = {'type': 'O', 'flexible': False, 'delta': 0, 'base_hours': 0}
-            _demand = {(_row[col_date], _row['Shift']): _row['DAA'] for _, _row in df_input_filtered.iterrows()}
+            _shift_attrs = {
+                row["Shift"]: {
+                    "type": row["Type"],
+                    "flexible": row["Flexible"],
+                    "delta": row["Working_Hour_Delta"],
+                    "base_hours": row["Working_Hour"],
+                }
+                for _, row in df_shifts.iterrows()
+            }
+            _shift_attrs["O"] = {
+                "type": "O",
+                "flexible": False,
+                "delta": 0,
+                "base_hours": 0,
+            }
+            _demand = {
+                (_row[col_date], _row["Shift"]): _row["DAA"]
+                for _, _row in df_input_filtered.iterrows()
+            }
             _weeks = defaultdict(list)
-            for _d in _dates: _weeks[_d - timedelta(days=_d.weekday())].append(_d)
+            for _d in _dates:
+                _weeks[_d - timedelta(days=_d.weekday())].append(_d)
 
             # === MODEL CREATION ===
             _model = cp_model.CpModel()
-            _assign = {(_d, _a, _s): _model.NewBoolVar(f'assign_{_d}_{_a}_{_s}')
-                       for _d in _dates for _a in _ambulances for _s in _shifts}
+            _assign = {
+                (_d, _a, _s): _model.NewBoolVar(f"assign_{_d}_{_a}_{_s}")
+                for _d in _dates
+                for _a in _ambulances
+                for _s in _shifts
+            }
             _hour_adjust = {
                 (_d, _a, _s): (
-                    _model.NewIntVar(-_shift_attrs[_s]['delta'], _shift_attrs[_s]['delta'], f'adj_{_d}_{_a}_{_s}')
-                    if _shift_attrs[_s]['flexible'] else _model.NewConstant(0)
+                    _model.NewIntVar(
+                        -_shift_attrs[_s]["delta"],
+                        _shift_attrs[_s]["delta"],
+                        f"adj_{_d}_{_a}_{_s}",
+                    )
+                    if _shift_attrs[_s]["flexible"]
+                    else _model.NewConstant(0)
                 )
-                for _d in _dates for _a in _ambulances for _s in _shifts
+                for _d in _dates
+                for _a in _ambulances
+                for _s in _shifts
             }
+
+            # Create assumption literals for each requirement group
+            r1_assump = _model.NewBoolVar("R1_Demand")
+            r2_assump = _model.NewBoolVar("R2_OneShiftPerDay")
+            r3_assump = _model.NewBoolVar("R3_NightRest")
+            r4_assump = _model.NewBoolVar("R4_WeeklyHours")
+            assumption_vars = [r1_assump, r2_assump, r3_assump, r4_assump]
 
             # === HARD CONSTRAINTS (R1-R4) ===
             for _d in _dates:
                 for _s in _shifts:
-                    if _s != 'O' and (_d, _s) in _demand:
-                        _model.Add(sum(_assign[(_d, _a, _s)] for _a in _ambulances) == _demand[(_d, _s)])
+                    if _s != "O" and (_d, _s) in _demand:
+                        _model.Add(
+                            sum(_assign[(_d, _a, _s)] for _a in _ambulances)
+                            == _demand[(_d, _s)]
+                        ).OnlyEnforceIf(r1_assump)
             for _d in _dates:
                 for _a in _ambulances:
-                    _model.Add(sum(_assign[(_d, _a, _s)] for _s in _shifts) == 1)
-            for _a in _ambulances:
-                for _i, _d in enumerate(_dates[:-1]):
-                    _next_day = _dates[_i+1]
-                    for _s in [_s for _s, attrs in _shift_attrs.items() if attrs['type'] == 'N']:
-                        _model.AddBoolOr([_assign[(_d, _a, _s)].Not(), _assign[(_next_day, _a, 'O')]])
+                    _model.Add(
+                        sum(_assign[(_d, _a, _s)] for _s in _shifts) == 1
+                    ).OnlyEnforceIf(r2_assump)
+
+            # === R3: Night Shift Rest (Configurable Double Nights, Enforce O after double N) ===
+            n_shift_types = [
+                s for s, attrs in _shift_attrs.items() if attrs["type"] == "N"
+            ]
+            if allow_double_nights_checkbox.value:
+                # Allow up to two consecutive N, but require O after double N
+                for _a in _ambulances:
+                    for _i in range(len(_dates) - 2):
+                        d0, d1, d2 = _dates[_i], _dates[_i + 1], _dates[_i + 2]
+                        for n_shift in n_shift_types:
+                            # If N on d0 and N on d1, then O on d2
+                            _model.AddBoolOr(
+                                [
+                                    _assign[(d0, _a, n_shift)].Not(),
+                                    _assign[(d1, _a, n_shift)].Not(),
+                                    _assign[(d2, _a, "O")],
+                                ]
+                            ).OnlyEnforceIf(r3_assump)
+                    # Also enforce: single N must still be followed by O if not a double N
+                    for _i, _d in enumerate(_dates[:-1]):
+                        _next_day = _dates[_i + 1]
+                        for n_shift in n_shift_types:
+                            _model.AddBoolOr(
+                                [
+                                    _assign[(_d, _a, n_shift)].Not(),
+                                    _assign[(_next_day, _a, "O")],
+                                    _assign[(_next_day, _a, n_shift)],
+                                ]
+                            ).OnlyEnforceIf(r3_assump)
+            else:
+                # If not allow double nights: any N shift must be followed by O
+                for _a in _ambulances:
+                    for _i, _d in enumerate(_dates[:-1]):
+                        _next_day = _dates[_i + 1]
+                        for n_shift in n_shift_types:
+                            _model.AddBoolOr(
+                                [
+                                    _assign[(_d, _a, n_shift)].Not(),
+                                    _assign[(_next_day, _a, "O")],
+                                ]
+                            ).OnlyEnforceIf(r3_assump)
+
             for _week_start, _week_dates in _weeks.items():
                 for _a in _ambulances:
                     _weekly_hours_expr = []
                     for _d in _week_dates:
                         for _s in _shifts:
-                            _actual_hours_var = _model.NewIntVar(0, 24, f'hours_{_a}_{_d}_{_s}')
-                            _model.Add(_actual_hours_var == 0).OnlyEnforceIf(_assign[(_d, _a, _s)].Not())
-                            _model.Add(_actual_hours_var == _shift_attrs[_s]['base_hours'] + _hour_adjust[(_d, _a, _s)]).OnlyEnforceIf(_assign[(_d, _a, _s)])
+                            _actual_hours_var = _model.NewIntVar(
+                                0, 24, f"hours_{_a}_{_d}_{_s}"
+                            )
+                            _model.Add(_actual_hours_var == 0).OnlyEnforceIf(
+                                _assign[(_d, _a, _s)].Not()
+                            )
+                            _model.Add(
+                                _actual_hours_var
+                                == _shift_attrs[_s]["base_hours"]
+                                + _hour_adjust[(_d, _a, _s)]
+                            ).OnlyEnforceIf(_assign[(_d, _a, _s)])
                             _weekly_hours_expr.append(_actual_hours_var)
-                    _model.Add(sum(_weekly_hours_expr) == 48)
+                    _model.Add(sum(_weekly_hours_expr) == 48).OnlyEnforceIf(
+                        r4_assump
+                    )
 
-            # === SOFT CONSTRAINTS (R5 and R6) ===
+            _model.AddAssumptions(assumption_vars)
+
+            # === SOFT CONSTRAINTS (R5, R6, R7) ===
             _objective_terms = []
 
-             # === R5: Fairness of Tough Shifts (Squared Deviation, Hints, Tight Bounds) ===
-        
-            # Dynamically determine all shift codes of type "N" from the SHIFTS sheet
-            _tough_shifts = [row['Shift'] for _, row in df_shifts.iterrows() if row['Type'] == 'N']
-        
-            _total_tough_shifts_to_assign = sum(_demand.get((_d, _s), 0) for _d in _dates for _s in _tough_shifts)
-            min_tough = _total_tough_shifts_to_assign // _num_ambulances
-            max_tough = min_tough + 1 if _total_tough_shifts_to_assign % _num_ambulances else min_tough
-        
-            _tough_shift_counts = [
-                _model.NewIntVar(min_tough, max_tough, f'tough_count_{_a}') for _a in _ambulances
+            # R5: Fairness of Tough Shifts (Squared Deviation, Hints, Tight Bounds)
+            _tough_shifts = [
+                row["Shift"]
+                for _, row in df_shifts.iterrows()
+                if row["Type"] == "N"
             ]
-        
+            _total_tough_shifts_to_assign = sum(
+                _demand.get((_d, _s), 0) for _d in _dates for _s in _tough_shifts
+            )
+            min_tough = _total_tough_shifts_to_assign // _num_ambulances
+            max_tough = (
+                min_tough + 1
+                if _total_tough_shifts_to_assign % _num_ambulances
+                else min_tough
+            )
+            _tough_shift_counts = [
+                _model.NewIntVar(min_tough, max_tough, f"tough_count_{_a}")
+                for _a in _ambulances
+            ]
             for _a_idx, _a in enumerate(_ambulances):
-                _model.Add(_tough_shift_counts[_a_idx] == sum(
-                    _assign[(_d, _a, _s)] for _d in _dates for _s in _tough_shifts
-                ))
-        
+                _model.Add(
+                    _tough_shift_counts[_a_idx]
+                    == sum(
+                        _assign[(_d, _a, _s)]
+                        for _d in _dates
+                        for _s in _tough_shifts
+                    )
+                )
             for _count_var in _tough_shift_counts:
                 _model.AddHint(_count_var, min_tough)
-        
             fairness_sq_devs = []
             for _count_var in _tough_shift_counts:
-                _diff = _model.NewIntVar(-max_tough, max_tough, f'diff_{_count_var.Name()}')
+                _diff = _model.NewIntVar(
+                    -max_tough, max_tough, f"diff_{_count_var.Name()}"
+                )
                 _model.Add(_diff == _count_var - min_tough)
-                _sq_dev = _model.NewIntVar(0, max_tough * max_tough, f'sq_dev_{_count_var.Name()}')
+                _sq_dev = _model.NewIntVar(
+                    0, max_tough * max_tough, f"sq_dev_{_count_var.Name()}"
+                )
                 _model.AddMultiplicationEquality(_sq_dev, [_diff, _diff])
                 fairness_sq_devs.append(_sq_dev)
-        
-            _objective_terms.append(r5_fairness_slider.value * sum(fairness_sq_devs))
+            _objective_terms.append(
+                r5_fairness_slider.value * sum(fairness_sq_devs)
+            )
 
-            # === R6: Consistency of Day Shifts (Soft) ===
+            # R6: Consistency of Day Shifts (Soft)
             if r6_consistency_slider is not None:
                 for _a in _ambulances:
                     _d_shifts_for_this_amb = []
-                    for _d_shift in [s for s, attrs in _shift_attrs.items() if attrs['type'] == 'D']:
-                        _is_used = _model.NewBoolVar(f'used_{_a}_{_d_shift}')
-                        _model.Add(sum(_assign[(_d, _a, _d_shift)] for _d in _dates) > 0).OnlyEnforceIf(_is_used)
-                        _model.Add(sum(_assign[(_d, _a, _d_shift)] for _d in _dates) == 0).OnlyEnforceIf(_is_used.Not())
+                    for _d_shift in [
+                        s
+                        for s, attrs in _shift_attrs.items()
+                        if attrs["type"] == "D"
+                    ]:
+                        _is_used = _model.NewBoolVar(f"used_{_a}_{_d_shift}")
+                        _model.Add(
+                            sum(_assign[(_d, _a, _d_shift)] for _d in _dates) > 0
+                        ).OnlyEnforceIf(_is_used)
+                        _model.Add(
+                            sum(_assign[(_d, _a, _d_shift)] for _d in _dates) == 0
+                        ).OnlyEnforceIf(_is_used.Not())
                         _d_shifts_for_this_amb.append(_is_used)
-                    _objective_terms.append(r6_consistency_slider.value * (sum(_d_shifts_for_this_amb) - 1))
+                    _objective_terms.append(
+                        r6_consistency_slider.value
+                        * (sum(_d_shifts_for_this_amb) - 1)
+                    )
 
-            # === Decision Strategy for Assignment Variables ===
-            assign_vars = [_assign[(_d, _a, _s)] for _d in _dates for _a in _ambulances for _s in _shifts]
-            _model.AddDecisionStrategy(assign_vars, cp_model.CHOOSE_FIRST, cp_model.SELECT_MIN_VALUE)
-
-           # === SHOW PROBLEM COMPLEXITY ===
-            complexity = compute_problem_complexity(_dates, _shifts, _ambulances, _shift_attrs, df_input_filtered)
-            mo.output.replace(mo.vstack([
-                mo.md("🔄 **Solving...**"),
-                complexity,
-            ]))
-
-            # === R7: Consistency of N Shifts (Soft) ===
-            # Penalize ambulances for being assigned more than one type of "N" shift
-        
+            # R7: Consistency of N Shifts (Soft)
             if r7_consistency_slider is not None:
-                # Find all shift codes of type "N"
-                n_shift_types = [s for s, attrs in _shift_attrs.items() if attrs['type'] == 'N']
+                n_shift_types = [
+                    s for s, attrs in _shift_attrs.items() if attrs["type"] == "N"
+                ]
                 for _a in _ambulances:
                     n_shifts_for_this_amb = []
                     for n_shift in n_shift_types:
-                        _is_used = _model.NewBoolVar(f'usedN_{_a}_{n_shift}')
-                        _model.Add(sum(_assign[(_d, _a, n_shift)] for _d in _dates) > 0).OnlyEnforceIf(_is_used)
-                        _model.Add(sum(_assign[(_d, _a, n_shift)] for _d in _dates) == 0).OnlyEnforceIf(_is_used.Not())
+                        _is_used = _model.NewBoolVar(f"usedN_{_a}_{n_shift}")
+                        _model.Add(
+                            sum(_assign[(_d, _a, n_shift)] for _d in _dates) > 0
+                        ).OnlyEnforceIf(_is_used)
+                        _model.Add(
+                            sum(_assign[(_d, _a, n_shift)] for _d in _dates) == 0
+                        ).OnlyEnforceIf(_is_used.Not())
                         n_shifts_for_this_amb.append(_is_used)
-                    # Penalize using more than one type of N shift
-                    _objective_terms.append(r7_consistency_slider.value * (sum(n_shifts_for_this_amb) - 1))
+                    _objective_terms.append(
+                        r7_consistency_slider.value
+                        * (sum(n_shifts_for_this_amb) - 1)
+                    )
 
+            # === Decision Strategy for Assignment Variables ===
+            assign_vars = [
+                _assign[(_d, _a, _s)]
+                for _d in _dates
+                for _a in _ambulances
+                for _s in _shifts
+            ]
+            _model.AddDecisionStrategy(
+                assign_vars, cp_model.CHOOSE_FIRST, cp_model.SELECT_MIN_VALUE
+            )
+
+            # === SHOW PROBLEM COMPLEXITY ===
+            complexity = compute_problem_complexity(
+                _dates, _shifts, _ambulances, _shift_attrs, df_input_filtered
+            )
+            mo.output.replace(
+                mo.vstack(
+                    [
+                        mo.md("🔄 **Solving...**"),
+                        complexity,
+                    ]
+                )
+            )
 
             # === Solve (with parallelism) ===
             if _objective_terms:
                 _model.Minimize(sum(_objective_terms))
             _solver = cp_model.CpSolver()
-            _solver.parameters.max_time_in_seconds = 240.0
-            _solver.parameters.num_search_workers = 4  # Use 4 CPU cores for parallel search
+            _solver.parameters.max_time_in_seconds = 480.0
+            _solver.parameters.num_search_workers = (
+                4  # Use 4 CPU cores for parallel search
+            )
             _status = _solver.Solve(_model)
 
             # === EXTRACT AND DISPLAY RESULTS ===
@@ -415,20 +572,67 @@ def _(
                     for _a in _ambulances:
                         for _s in _shifts:
                             if _solver.Value(_assign[(_d, _a, _s)]):
-                                _adjustment = _solver.Value(_hour_adjust[(_d, _a, _s)]) if _shift_attrs[_s]['flexible'] else 0
-                                _actual_hours = _shift_attrs[_s]['base_hours'] + _adjustment
-                                _schedule_data.append({'Date': _d, 'Ambulance': f'A{_a:03d}', 'Shift': _s, 'Base_Hours': _shift_attrs[_s]['base_hours'], 'Hour_Adjustment': _adjustment, 'Actual_Hours': _actual_hours})
+                                _adjustment = (
+                                    _solver.Value(_hour_adjust[(_d, _a, _s)])
+                                    if _shift_attrs[_s]["flexible"]
+                                    else 0
+                                )
+                                _actual_hours = (
+                                    _shift_attrs[_s]["base_hours"] + _adjustment
+                                )
+                                _schedule_data.append(
+                                    {
+                                        "Date": _d,
+                                        "Ambulance": f"A{_a:03d}",
+                                        "Shift": _s,
+                                        "Base_Hours": _shift_attrs[_s][
+                                            "base_hours"
+                                        ],
+                                        "Hour_Adjustment": _adjustment,
+                                        "Actual_Hours": _actual_hours,
+                                    }
+                                )
                 df_schedule = pd.DataFrame(_schedule_data)
-                df_schedule['WeekStart'] = df_schedule['Date'].apply(lambda x: x - timedelta(days=x.weekday()))
-                _weekly_totals = df_schedule.groupby(['WeekStart', 'Ambulance'])['Actual_Hours'].sum()
-                _obj_val = _solver.ObjectiveValue() if _objective_terms else "N/A (No soft constraints)"
-                schedule_result = mo.vstack([
-                    mo.md(f"✅ **Optimal Solution Found!** (Objective Value: {_obj_val})"),
-                    mo.md("### Detailed Schedule:"), mo.ui.table(df_schedule),
-                    mo.md("### Weekly Hours Verification:"), mo.ui.table(_weekly_totals.reset_index()),
-                ])
+                df_schedule["WeekStart"] = df_schedule["Date"].apply(
+                    lambda x: x - timedelta(days=x.weekday())
+                )
+                _weekly_totals = df_schedule.groupby(["WeekStart", "Ambulance"])[
+                    "Actual_Hours"
+                ].sum()
+                _obj_val = (
+                    _solver.ObjectiveValue()
+                    if _objective_terms
+                    else "N/A (No soft constraints)"
+                )
+                schedule_result = mo.vstack(
+                    [
+                        mo.md(
+                            f"✅ **Optimal Solution Found!** (Objective Value: {_obj_val})"
+                        ),
+                        mo.md("### Detailed Schedule:"),
+                        mo.ui.table(df_schedule),
+                        mo.md("### Weekly Hours Verification:"),
+                        mo.ui.table(_weekly_totals.reset_index()),
+                    ]
+                )
             else:
-                schedule_result = mo.md(f"❌ **INFEASIBLE:** No solution exists that satisfies all hard constraints.")
+                unsat_core = _solver.SufficientAssumptionsForInfeasibility()
+                # unsat_core is a list of indices
+                unsat_names = [
+                    var.Name()
+                    for var in assumption_vars
+                    if var.Index() in unsat_core
+                ]
+                if unsat_names:
+                    reason_text = (
+                        "The following requirements are responsible for infeasibility:\n"
+                        + "\n".join(f"- {name}" for name in unsat_names)
+                    )
+                else:
+                    reason_text = "No specific requirements could be identified as the cause."
+                schedule_result = mo.md(
+                    f"❌ **INFEASIBLE:** No solution exists that satisfies all hard constraints.\n\n{reason_text}"
+                )
                 df_schedule = None
 
         finally:
@@ -443,55 +647,103 @@ def _(
         schedule_result = None
 
     schedule_result
-
     return (df_schedule,)
 
 
 @app.cell
-def _(date, df_schedule, mo, pd, timedelta):
-    # cell 6: Calendar View
+def _(date, df_schedule, df_shifts, mo, pd, timedelta):
+    # cell 6: Calendar View (Revised: Night Shifts, Tabs)
+
     if df_schedule is not None and not df_schedule.empty:
-        _calendar_sections = []
-        _tough_shifts = ['H', 'N']
-        for _week_start, _week_group in df_schedule.groupby('WeekStart'):
+        # Dynamically determine all shift codes of type "N" from the SHIFTS sheet
+        night_shift_types = [
+            row["Shift"] for _, row in df_shifts.iterrows() if row["Type"] == "N"
+        ]
+        calendar_tabs = {}
+        for _week_start, _week_group in df_schedule.groupby("WeekStart"):
             _week_group_copy = _week_group.copy()
-            _week_group_copy['display_shift'] = _week_group_copy.apply(lambda row: f"{row['Shift']} ({row['Actual_Hours']}h)", axis=1)
-            _calendar_df = _week_group_copy.pivot_table(index='Ambulance', columns='Date', values='display_shift', aggfunc='first', fill_value="")
-            _total_hours = _week_group.groupby('Ambulance')['Actual_Hours'].sum()
-            _calendar_df['Weekly Total Hours'] = _total_hours
-            _tough_shift_counts = _week_group[_week_group['Shift'].isin(_tough_shifts)].groupby('Ambulance').size()
-            _calendar_df['Total H+N Shifts'] = _tough_shift_counts.fillna(0).astype(int)
+            _week_group_copy["display_shift"] = _week_group_copy.apply(
+                lambda row: f"{row['Shift']} ({row['Actual_Hours']}h)", axis=1
+            )
+            _calendar_df = _week_group_copy.pivot_table(
+                index="Ambulance",
+                columns="Date",
+                values="display_shift",
+                aggfunc="first",
+                fill_value="",
+            )
+            _total_hours = _week_group.groupby("Ambulance")["Actual_Hours"].sum()
+            _calendar_df["Weekly Total Hours"] = _total_hours
+            # Count night shifts per ambulance (Type 'N')
+            night_shift_counts = (
+                _week_group[_week_group["Shift"].isin(night_shift_types)]
+                .groupby("Ambulance")
+                .size()
+            )
+            _calendar_df["Total Night Shifts"] = (
+                night_shift_counts.reindex(_calendar_df.index)
+                .fillna(0)
+                .astype(int)
+            )
             _calendar_df = _calendar_df.sort_index()
-            _formatted_columns = {_col: _col.strftime('%a %m/%d') for _col in _calendar_df.columns if isinstance(_col, (pd.Timestamp, date))}
+            _formatted_columns = {
+                _col: _col.strftime("%a %m/%d")
+                for _col in _calendar_df.columns
+                if isinstance(_col, (pd.Timestamp, date))
+            }
             _calendar_df = _calendar_df.rename(columns=_formatted_columns)
             _week_end = _week_start + timedelta(days=6)
-            _week_header = f"### Week: {_week_start.strftime('%Y-%m-%d')} to {_week_end.strftime('%Y-%m-%d')}"
-            _calendar_sections.extend([mo.md(_week_header), mo.ui.table(_calendar_df), mo.md("---")])
-        calendar_view = mo.vstack(_calendar_sections)
+            week_label = f"{_week_start.strftime('%Y-%m-%d')} to {_week_end.strftime('%Y-%m-%d')}"
+            calendar_tabs[week_label] = mo.ui.table(_calendar_df)
+        calendar_view = mo.ui.tabs(calendar_tabs)
     else:
-        calendar_view = mo.md("*Calendar view will appear after generating schedule*")
+        calendar_view = mo.md(
+            "*Calendar view will appear after generating schedule*"
+        )
     calendar_view
-
     return
 
 
 @app.cell
 def _(df_input_filtered, df_schedule, mo, pd):
     # cell 7: DAA Requirement Verification
-    if df_input_filtered is not None and df_schedule is not None and not df_schedule.empty:
-        _scheduled_counts = df_schedule.groupby(['Date', 'Shift']).size().reset_index(name='Scheduled')
-        _daa_summary_df = pd.merge(df_input_filtered, _scheduled_counts, on=['Date', 'Shift'], how='left')
-        _daa_summary_df['Scheduled'] = _daa_summary_df['Scheduled'].fillna(0).astype(int)
+    if (
+        df_input_filtered is not None
+        and df_schedule is not None
+        and not df_schedule.empty
+    ):
+        _scheduled_counts = (
+            df_schedule.groupby(["Date", "Shift"])
+            .size()
+            .reset_index(name="Scheduled")
+        )
+        _daa_summary_df = pd.merge(
+            df_input_filtered, _scheduled_counts, on=["Date", "Shift"], how="left"
+        )
+        _daa_summary_df["Scheduled"] = (
+            _daa_summary_df["Scheduled"].fillna(0).astype(int)
+        )
+
         def _determine_status(row):
-            if row['Scheduled'] == row['DAA']: return '✅ Exactly Met'
-            elif row['Scheduled'] > row['DAA']: return '🟡 Exceeded'
-            else: return '🔴 Missed'
-        _daa_summary_df['Status'] = _daa_summary_df.apply(_determine_status, axis=1)
-        _final_summary = _daa_summary_df[['Date', 'Shift', 'DAA', 'Scheduled', 'Status']].rename(columns={'DAA': 'Required'})
-        daa_check_view = mo.vstack([
-            mo.md("### DAA Requirement Verification"),
-            mo.ui.table(_final_summary)
-        ])
+            if row["Scheduled"] == row["DAA"]:
+                return "✅ Exactly Met"
+            elif row["Scheduled"] > row["DAA"]:
+                return "🟡 Exceeded"
+            else:
+                return "🔴 Missed"
+
+        _daa_summary_df["Status"] = _daa_summary_df.apply(
+            _determine_status, axis=1
+        )
+        _final_summary = _daa_summary_df[
+            ["Date", "Shift", "DAA", "Scheduled", "Status"]
+        ].rename(columns={"DAA": "Required"})
+        daa_check_view = mo.vstack(
+            [
+                mo.md("### DAA Requirement Verification"),
+                mo.ui.table(_final_summary),
+            ]
+        )
     else:
         daa_check_view = mo.md("*DAA check will appear after generating schedule*")
     daa_check_view
@@ -501,9 +753,7 @@ def _(df_input_filtered, df_schedule, mo, pd):
 @app.cell
 def _(mo):
     export_format = mo.ui.dropdown(
-        options=["XLSX", "PDF"],
-        value="XLSX",
-        label="Export calendar as:"
+        options=["XLSX", "PDF"], value="XLSX", label="Export calendar as:"
     )
     export_run_button = mo.ui.run_button(label="Export Calendar")
     return export_format, export_run_button
@@ -513,6 +763,7 @@ def _(mo):
 def _(
     date,
     df_schedule,
+    df_shifts,
     export_format,
     export_run_button,
     io,
@@ -524,44 +775,62 @@ def _(
         export_status = mo.md("")
         export_data = None
 
-        # Prepare weekly calendar tables
+        # Use unique variable names for export logic
+        export_night_shift_types = [
+            row["Shift"] for _, row in df_shifts.iterrows() if row["Type"] == "N"
+        ]
+
         week_tables = {}
-        _tough_shifts = ['H', 'N']
-        for _week_start, _week_group in df_schedule.groupby('WeekStart'):
+        for _week_start, _week_group in df_schedule.groupby("WeekStart"):
             _week_group_copy = _week_group.copy()
-            _week_group_copy['display_shift'] = _week_group_copy.apply(
+            _week_group_copy["display_shift"] = _week_group_copy.apply(
                 lambda row: f"{row['Shift']} ({row['Actual_Hours']}h)", axis=1
             )
             _calendar_df = _week_group_copy.pivot_table(
-                index='Ambulance', columns='Date', values='display_shift', aggfunc='first', fill_value=""
+                index="Ambulance",
+                columns="Date",
+                values="display_shift",
+                aggfunc="first",
+                fill_value="",
             )
-            _total_hours = _week_group.groupby('Ambulance')['Actual_Hours'].sum()
-            _calendar_df['Weekly Total Hours'] = _total_hours
-            _tough_shift_counts = _week_group[_week_group['Shift'].isin(_tough_shifts)].groupby('Ambulance').size()
-            # Ensure all ambulances are present and NaN is replaced by 0
-            _calendar_df['Total H+N Shifts'] = _tough_shift_counts.reindex(_calendar_df.index).fillna(0).astype(int)
+            _total_hours = _week_group.groupby("Ambulance")["Actual_Hours"].sum()
+            _calendar_df["Weekly Total Hours"] = _total_hours
+            # Use unique variable for night shift counts
+            export_night_shift_counts = (
+                _week_group[_week_group["Shift"].isin(export_night_shift_types)]
+                .groupby("Ambulance")
+                .size()
+            )
+            _calendar_df["Total Night Shifts"] = (
+                export_night_shift_counts.reindex(_calendar_df.index)
+                .fillna(0)
+                .astype(int)
+            )
             _calendar_df = _calendar_df.sort_index()
-            _formatted_columns = {_col: _col.strftime('%a %m/%d') for _col in _calendar_df.columns if isinstance(_col, (pd.Timestamp, date))}
+            _formatted_columns = {
+                _col: _col.strftime("%a %m/%d")
+                for _col in _calendar_df.columns
+                if isinstance(_col, (pd.Timestamp, date))
+            }
             _calendar_df = _calendar_df.rename(columns=_formatted_columns)
             week_tables[_week_start] = _calendar_df
 
         if export_run_button.value:
             if export_format.value == "XLSX":
                 buf = io.BytesIO()
-                with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+                with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
                     for week_start, week_df in week_tables.items():
                         week_end = week_start + timedelta(days=6)
                         sheet_name = f"{week_start.strftime('%Y-%m-%d')}_to_{week_end.strftime('%m-%d')}"
-                        # Excel sheet names max length is 31
                         writer.book.add_worksheet(sheet_name[:31])
                         week_df.to_excel(writer, sheet_name=sheet_name[:31])
                 buf.seek(0)
                 export_data = mo.download(
-                    buf.getvalue(),
-                    filename="calendar.xlsx",
-                    label="Download XLSX"
+                    buf.getvalue(), filename="calendar.xlsx", label="Download XLSX"
                 )
-                export_status = mo.md("✅ XLSX calendar ready for download (one week per sheet).")
+                export_status = mo.md(
+                    "✅ XLSX calendar ready for download (one week per sheet)."
+                )
             elif export_format.value == "PDF":
                 try:
                     import matplotlib.pyplot as plt
@@ -571,40 +840,52 @@ def _(
                     with PdfPages(buf) as pdf:
                         for week_start, week_df in week_tables.items():
                             week_end = week_start + timedelta(days=6)
-                            fig, ax = plt.subplots(figsize=(min(20, 2 + len(week_df.columns)), min(20, 2 + len(week_df))))
-                            ax.axis('tight')
-                            ax.axis('off')
+                            fig, ax = plt.subplots(
+                                figsize=(
+                                    min(20, 2 + len(week_df.columns)),
+                                    min(20, 2 + len(week_df)),
+                                )
+                            )
+                            ax.axis("tight")
+                            ax.axis("off")
                             table = ax.table(
                                 cellText=week_df.values,
                                 colLabels=week_df.columns,
                                 rowLabels=week_df.index,
-                                loc='center'
+                                loc="center",
                             )
                             table.auto_set_font_size(False)
                             table.set_fontsize(8)
-                            plt.title(f"Week: {week_start.strftime('%Y-%m-%d')} to {week_end.strftime('%Y-%m-%d')}")
-                            pdf.savefig(fig, bbox_inches='tight')
+                            plt.title(
+                                f"Week: {week_start.strftime('%Y-%m-%d')} to {week_end.strftime('%Y-%m-%d')}"
+                            )
+                            pdf.savefig(fig, bbox_inches="tight")
                             plt.close(fig)
                     buf.seek(0)
                     export_data = mo.download(
                         buf.getvalue(),
                         filename="calendar.pdf",
-                        label="Download PDF"
+                        label="Download PDF",
                     )
-                    export_status = mo.md("✅ PDF calendar ready for download (one week per page).")
+                    export_status = mo.md(
+                        "✅ PDF calendar ready for download (one week per page)."
+                    )
                 except ImportError:
-                    export_status = mo.md("❌ PDF export requires matplotlib. Please install it in your environment.")
+                    export_status = mo.md(
+                        "❌ PDF export requires matplotlib. Please install it in your environment."
+                    )
 
-        export_controls = mo.vstack([
-            mo.hstack([export_format, export_run_button]),
-            export_status,
-            export_data if export_data else mo.md("")
-        ])
+        export_controls = mo.vstack(
+            [
+                mo.hstack([export_format, export_run_button]),
+                export_status,
+                export_data if export_data else mo.md(""),
+            ]
+        )
     else:
         export_controls = mo.md("*No schedule to export yet.*")
 
     export_controls
-
     return
 
 
@@ -612,29 +893,40 @@ def _(
 def _(mo):
     # cell 9: Complexity Metric Function
 
-    def compute_problem_complexity(_dates, _shifts, _ambulances, _shift_attrs, df_input):
+
+    def compute_problem_complexity(
+        _dates, _shifts, _ambulances, _shift_attrs, df_input
+    ):
         # Assignment variables
         num_assign_vars = len(_dates) * len(_ambulances) * len(_shifts)
 
         # Hard constraints
         num_hard_demand_constraints = len(_dates) * (len(_shifts) - 1)
         num_hard_one_shift_constraints = len(_dates) * len(_ambulances)
-        num_night_shifts = sum(1 for s in _shifts if _shift_attrs[s]['type'] == 'N')
-        num_hard_night_rest_constraints = len(_ambulances) * (len(_dates) - 1) * num_night_shifts
+        num_night_shifts = sum(
+            1 for s in _shifts if _shift_attrs[s]["type"] == "N"
+        )
+        num_hard_night_rest_constraints = (
+            len(_ambulances) * (len(_dates) - 1) * num_night_shifts
+        )
         num_weeks = len(_dates) // 7
         num_hard_weekly_hours_constraints = len(_ambulances) * num_weeks
         num_hard_constraints = (
-            num_hard_demand_constraints +
-            num_hard_one_shift_constraints +
-            num_hard_night_rest_constraints +
-            num_hard_weekly_hours_constraints
+            num_hard_demand_constraints
+            + num_hard_one_shift_constraints
+            + num_hard_night_rest_constraints
+            + num_hard_weekly_hours_constraints
         )
 
         # Soft constraints
         num_soft_fairness_constraints = len(_ambulances) * 3
-        num_day_shift_types = sum(1 for s in _shifts if _shift_attrs[s]['type'] == 'D')
+        num_day_shift_types = sum(
+            1 for s in _shifts if _shift_attrs[s]["type"] == "D"
+        )
         num_soft_consistency_constraints = len(_ambulances) * num_day_shift_types
-        num_soft_constraints = num_soft_fairness_constraints + num_soft_consistency_constraints
+        num_soft_constraints = (
+            num_soft_fairness_constraints + num_soft_consistency_constraints
+        )
 
         return mo.md(f"""
         **Problem Size:**  
@@ -647,7 +939,6 @@ def _(mo):
         - **Hard Constraints:** {num_hard_constraints:,}  
         - **Soft Constraints:** {num_soft_constraints:,}
         """)
-
     return (compute_problem_complexity,)
 
 

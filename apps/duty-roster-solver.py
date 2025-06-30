@@ -261,6 +261,44 @@ def _(df_input, division_selector):
 
 
 @app.cell
+def _(col_date, df_input_filtered, df_shifts, mo, pd):
+    # cell 6: Minimum Ambulance Estimate
+
+    def estimate_min_ambulances(df_input_filtered, df_shifts, col_date):
+        if df_input_filtered is None or df_shifts is None:
+            return None
+    
+        dates = sorted(df_input_filtered[col_date].unique())
+        shifts = df_shifts['Shift'].tolist() + ['O']
+        shift_attrs = {row['Shift']: {'base_hours': row['Working_Hour']} for _, row in df_shifts.iterrows()}
+        shift_attrs['O'] = {'base_hours': 0}
+        from collections import defaultdict
+        weeks = defaultdict(list)
+        for d in dates:
+            weeks[d - pd.Timedelta(days=d.weekday())].append(d)
+        demand = { (row[col_date], row['Shift']): row['DAA'] for _, row in df_input_filtered.iterrows() }
+        min_ambs_per_week = []
+        for week_start, week_dates in weeks.items():
+            total_hours = 0
+            for d in week_dates:
+                for s in shifts:
+                    if s != 'O':
+                        total_hours += demand.get((d, s), 0) * shift_attrs[s]['base_hours']
+            min_ambs = (total_hours + 47) // 48  # ceiling division for 48-hour week
+            min_ambs_per_week.append(min_ambs)
+        if min_ambs_per_week:
+            return max(min_ambs_per_week)
+        else:
+            return None
+
+    min_ambulances_estimate = estimate_min_ambulances(df_input_filtered, df_shifts, col_date)
+    min_amb_display = mo.md(f"**Estimated minimum ambulances needed:** {min_ambulances_estimate if min_ambulances_estimate is not None else 'N/A'}")
+    min_amb_display
+
+    return
+
+
+@app.cell
 def _(
     allow_double_nights_checkbox,
     col_date,

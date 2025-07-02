@@ -189,8 +189,13 @@ def _(df_input, df_shifts, input_error, mo):
         division_selector = None
 
     allow_double_nights_checkbox = mo.ui.checkbox(
-        value=False,
+        value=True,
         label="Allow double nights (permit two consecutive 'N' shifts, but not three)",
+    )
+
+    r4_average_checkbox = mo.ui.checkbox(
+        value=True,
+        label="Allow average 48 hours per week (over the whole period)",
     )
 
     # The run_button is disabled when get_solving() is True.
@@ -219,6 +224,7 @@ def _(df_input, df_shifts, input_error, mo):
         controls_list.append(division_selector)
     controls_list.append(run_button)
     controls_list.append(mo.md("---"))
+    controls_list.append(r4_average_checkbox)
     controls_list.append(allow_double_nights_checkbox)
     controls_list.append(r5_fairness_slider)
     controls_list.append(r6_consistency_slider)
@@ -236,6 +242,7 @@ def _(df_input, df_shifts, input_error, mo):
         division_selector,
         get_solving,
         number_of_amb_input,
+        r4_average_checkbox,
         r5_fairness_slider,
         r6_consistency_slider,
         r7_consistency_slider,
@@ -267,7 +274,7 @@ def _(col_date, df_input_filtered, df_shifts, mo, pd):
     def estimate_min_ambulances(df_input_filtered, df_shifts, col_date):
         if df_input_filtered is None or df_shifts is None:
             return None
-    
+
         dates = sorted(df_input_filtered[col_date].unique())
         shifts = df_shifts['Shift'].tolist() + ['O']
         shift_attrs = {row['Shift']: {'base_hours': row['Working_Hour']} for _, row in df_shifts.iterrows()}
@@ -311,6 +318,7 @@ def _(
     mo,
     number_of_amb_input,
     pd,
+    r4_average_checkbox,
     r5_fairness_slider,
     r6_consistency_slider,
     r7_consistency_slider,
@@ -392,13 +400,6 @@ def _(
                 for _s in _shifts
             }
 
-            # Create assumption literals for each requirement group
-            r1_assump = _model.NewBoolVar("R1_Demand")
-            r2_assump = _model.NewBoolVar("R2_OneShiftPerDay")
-            r3_assump = _model.NewBoolVar("R3_NightRest")
-            r4_assump = _model.NewBoolVar("R4_WeeklyHours")
-            assumption_vars = [r1_assump, r2_assump, r3_assump, r4_assump]
-
             # === HARD CONSTRAINTS (R1-R4) ===
             for _d in _dates:
                 for _s in _shifts:
@@ -406,12 +407,12 @@ def _(
                         _model.Add(
                             sum(_assign[(_d, _a, _s)] for _a in _ambulances)
                             == _demand[(_d, _s)]
-                        ).OnlyEnforceIf(r1_assump)
+                        )
             for _d in _dates:
                 for _a in _ambulances:
                     _model.Add(
                         sum(_assign[(_d, _a, _s)] for _s in _shifts) == 1
-                    ).OnlyEnforceIf(r2_assump)
+                    )
 
             # === R3: Night Shift Rest (Configurable Double Nights, Enforce O after double N) ===
             n_shift_types = [
@@ -430,7 +431,7 @@ def _(
                                     _assign[(d1, _a, n_shift)].Not(),
                                     _assign[(d2, _a, "O")],
                                 ]
-                            ).OnlyEnforceIf(r3_assump)
+                            )
                     # Also enforce: single N must still be followed by O if not a double N
                     for _i, _d in enumerate(_dates[:-1]):
                         _next_day = _dates[_i + 1]
@@ -441,7 +442,7 @@ def _(
                                     _assign[(_next_day, _a, "O")],
                                     _assign[(_next_day, _a, n_shift)],
                                 ]
-                            ).OnlyEnforceIf(r3_assump)
+                            )
             else:
                 # If not allow double nights: any N shift must be followed by O
                 for _a in _ambulances:
@@ -453,30 +454,38 @@ def _(
                                     _assign[(_d, _a, n_shift)].Not(),
                                     _assign[(_next_day, _a, "O")],
                                 ]
-                            ).OnlyEnforceIf(r3_assump)
+                            )
 
-            for _week_start, _week_dates in _weeks.items():
+            # Prepare actual_hours_vars for all (d, a, s)
+            _actual_hours_vars = {}
+            for _d in _dates:
                 for _a in _ambulances:
-                    _weekly_hours_expr = []
-                    for _d in _week_dates:
-                        for _s in _shifts:
-                            _actual_hours_var = _model.NewIntVar(
-                                0, 24, f"hours_{_a}_{_d}_{_s}"
-                            )
-                            _model.Add(_actual_hours_var == 0).OnlyEnforceIf(
-                                _assign[(_d, _a, _s)].Not()
-                            )
-                            _model.Add(
-                                _actual_hours_var
-                                == _shift_attrs[_s]["base_hours"]
-                                + _hour_adjust[(_d, _a, _s)]
-                            ).OnlyEnforceIf(_assign[(_d, _a, _s)])
-                            _weekly_hours_expr.append(_actual_hours_var)
-                    _model.Add(sum(_weekly_hours_expr) == 48).OnlyEnforceIf(
-                        r4_assump
-                    )
-
-            _model.AddAssumptions(assumption_vars)
+                    for _s in _shifts:
+                        _actual_hours_var = _model.NewIntVar(0, 24, f"hours_{_a}_{_d}_{_s}")
+                        _model.Add(_actual_hours_var == 0).OnlyEnforceIf(_assign[(_d, _a, _s)].Not())
+                        _model.Add(
+                            _actual_hours_var == _shift_attrs[_s]["base_hours"] + _hour_adjust[(_d, _a, _s)]
+                        ).OnlyEnforceIf(_assign[(_d, _a, _s)])
+                        _actual_hours_vars[(_d, _a, _s)] = _actual_hours_var
+        
+            if r4_average_checkbox.value:
+                # Allow average: total hours over the whole period must be 48 * number of weeks
+                num_weeks = len(_weeks)
+                for _a in _ambulances:
+                    _total_hours_expr = [
+                        _actual_hours_vars[(_d, _a, _s)]
+                        for _d in _dates for _s in _shifts
+                    ]
+                    _model.Add(sum(_total_hours_expr) == 48 * num_weeks)
+            else:
+                # Enforce exactly 48 hours per week per ambulance
+                for _week_start, _week_dates in _weeks.items():
+                    for _a in _ambulances:
+                        _weekly_hours_expr = [
+                            _actual_hours_vars[(_d, _a, _s)]
+                            for _d in _week_dates for _s in _shifts
+                        ]
+                        _model.Add(sum(_weekly_hours_expr) == 48)
 
             # === SOFT CONSTRAINTS (R5, R6, R7) ===
             _objective_terms = []
@@ -577,7 +586,7 @@ def _(
                 for _s in _shifts
             ]
             _model.AddDecisionStrategy(
-                assign_vars, cp_model.CHOOSE_FIRST, cp_model.SELECT_MIN_VALUE
+                assign_vars, cp_model.CHOOSE_MIN_DOMAIN_SIZE, cp_model.SELECT_MIN_VALUE
             )
 
             # === SHOW PROBLEM COMPLEXITY ===
@@ -599,8 +608,10 @@ def _(
             _solver = cp_model.CpSolver()
             _solver.parameters.max_time_in_seconds = 480.0
             _solver.parameters.num_search_workers = (
-                4  # Use 4 CPU cores for parallel search
+                6 
             )
+            _solver.parameters.log_search_progress = True
+
             _status = _solver.Solve(_model)
 
             # === EXTRACT AND DISPLAY RESULTS ===
@@ -655,21 +666,8 @@ def _(
                 )
             else:
                 unsat_core = _solver.SufficientAssumptionsForInfeasibility()
-                # unsat_core is a list of indices
-                unsat_names = [
-                    var.Name()
-                    for var in assumption_vars
-                    if var.Index() in unsat_core
-                ]
-                if unsat_names:
-                    reason_text = (
-                        "The following requirements are responsible for infeasibility:\n"
-                        + "\n".join(f"- {name}" for name in unsat_names)
-                    )
-                else:
-                    reason_text = "No specific requirements could be identified as the cause."
                 schedule_result = mo.md(
-                    f"❌ **INFEASIBLE:** No solution exists that satisfies all hard constraints.\n\n{reason_text}"
+                    f"❌ **INFEASIBLE:** No solution exists that satisfies all hard constraints."
                 )
                 df_schedule = None
 
@@ -718,6 +716,10 @@ def _(date, df_schedule, df_shifts, mo, pd, timedelta):
                 .groupby("Ambulance")
                 .size()
             )
+            # Compute total working hours for each ambulance across the whole period
+            total_hours_whole_period = df_schedule.groupby("Ambulance")["Actual_Hours"].sum()
+            _calendar_df["Total Working Hours"] = total_hours_whole_period.reindex(_calendar_df.index)
+        
             _calendar_df["Total Night Shifts"] = (
                 night_shift_counts.reindex(_calendar_df.index)
                 .fillna(0)

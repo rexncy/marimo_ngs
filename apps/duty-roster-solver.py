@@ -689,7 +689,6 @@ def _(
 @app.cell
 def _(date, df_schedule, df_shifts, mo, pd, timedelta):
     # cell 6: Calendar View (Revised: Night Shifts, Tabs)
-
     if df_schedule is not None and not df_schedule.empty:
         # Dynamically determine all shift codes of type "N" from the SHIFTS sheet
         night_shift_types = [
@@ -717,8 +716,8 @@ def _(date, df_schedule, df_shifts, mo, pd, timedelta):
                 .size()
             )
             # Compute total working hours for each ambulance across the whole period
-            total_hours_whole_period = df_schedule.groupby("Ambulance")["Actual_Hours"].sum()
-            _calendar_df["Total Working Hours"] = total_hours_whole_period.reindex(_calendar_df.index)
+            _total_hours_whole_period = df_schedule.groupby("Ambulance")["Actual_Hours"].sum()
+            _calendar_df["Total Working Hours"] = _total_hours_whole_period.reindex(_calendar_df.index)
         
             _calendar_df["Total Night Shifts"] = (
                 night_shift_counts.reindex(_calendar_df.index)
@@ -734,7 +733,7 @@ def _(date, df_schedule, df_shifts, mo, pd, timedelta):
             _calendar_df = _calendar_df.rename(columns=_formatted_columns)
             _week_end = _week_start + timedelta(days=6)
             week_label = f"{_week_start.strftime('%Y-%m-%d')} to {_week_end.strftime('%Y-%m-%d')}"
-            calendar_tabs[week_label] = mo.ui.table(_calendar_df)
+            calendar_tabs[week_label] = mo.ui.table(_calendar_df, pagination=False)
         calendar_view = mo.ui.tabs(calendar_tabs)
     else:
         calendar_view = mo.md(
@@ -781,7 +780,7 @@ def _(df_input_filtered, df_schedule, mo, pd):
         daa_check_view = mo.vstack(
             [
                 mo.md("### DAA Requirement Verification"),
-                mo.ui.table(_final_summary),
+                mo.ui.table(_final_summary, pagination=False),
             ]
         )
     else:
@@ -833,7 +832,9 @@ def _(
                 aggfunc="first",
                 fill_value="",
             )
+        
             _total_hours = _week_group.groupby("Ambulance")["Actual_Hours"].sum()
+        
             _calendar_df["Weekly Total Hours"] = _total_hours
             # Use unique variable for night shift counts
             export_night_shift_counts = (
@@ -841,6 +842,10 @@ def _(
                 .groupby("Ambulance")
                 .size()
             )
+            _total_hours_whole_period = df_schedule.groupby("Ambulance")["Actual_Hours"].sum()
+
+            _calendar_df["Total Working Hours"] = _total_hours_whole_period.reindex(_calendar_df.index)
+        
             _calendar_df["Total Night Shifts"] = (
                 export_night_shift_counts.reindex(_calendar_df.index)
                 .fillna(0)

@@ -446,6 +446,7 @@ def _(
                             sum(_assign[(_d, _a, _s)] for _a in _ambulances)
                             == _demand[(_d, _s)]
                         )
+                    
             for _d in _dates:
                 for _a in _ambulances:
                     _model.Add(
@@ -795,8 +796,8 @@ def _(
                         ),
                         mo.md("### Detailed Schedule:"),
                         mo.ui.table(df_schedule),
-                        mo.md("### Weekly Hours Verification:"),
-                        mo.ui.table(_weekly_totals.reset_index()),
+                        #mo.md("### Weekly Hours Verification:"),
+                        #mo.ui.table(_weekly_totals.reset_index()),
                     ]
                 )
             else:

@@ -4,7 +4,7 @@ __generated_with = "0.14.7"
 app = marimo.App(width="medium")
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     # ## 1. Imports and Configuration
     import marimo as mo
@@ -17,7 +17,7 @@ def _():
     return Path, cp_model, date, defaultdict, io, mo, pd, timedelta
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(
         r"""
@@ -57,7 +57,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(Path, mo):
     # Global UI elements for cross-cell reference
     FILE_DIR = "apps/duty-roster-solver-files"
@@ -85,7 +85,7 @@ def _(Path, mo):
     return FILE_DIR, file_browser, file_uploader
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(FILE_DIR, Path, file_browser, file_uploader, io, mo, pd):
     # This cell depends on global file_browser and file_uploader from Cell 2
     _excel_file = None
@@ -136,7 +136,7 @@ def _(FILE_DIR, Path, file_browser, file_uploader, io, mo, pd):
     return col_date, df_input, df_shifts
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(df_input, df_shifts, mo):
     input_error = False
     if df_input is not None and df_shifts is not None:
@@ -194,7 +194,7 @@ def _(df_input, mo):
     )
 
     allow_triple_nights_checkbox = mo.ui.checkbox(
-        value=True,
+        value=False,
         label="Allow triple nights (permit three consecutive 'N' shifts, but not four)",
     )
 
@@ -204,7 +204,7 @@ def _(df_input, mo):
     )
 
     r4_leq_checkbox = mo.ui.checkbox(
-        value=False,
+        value=True,
         label="Allow working hours to be ≤ 48 (instead of exactly 48)",
     )
 
@@ -227,7 +227,7 @@ def _(df_input, mo):
         label="Enable D-Shift Consistency (R6) Priority",
     )
     r6_consistency_slider = mo.ui.slider(
-        1, 50, value=1, label="D-Shift Consistency (R6) Priority:"
+        1, 50, value=35, label="D-Shift Consistency (R6) Priority:"
     )
 
     r7_consistency_checkbox = mo.ui.checkbox(
@@ -237,8 +237,14 @@ def _(df_input, mo):
     r7_consistency_slider = mo.ui.slider(
         1,
         50,
-        value=1,  # Very low default value
+        value=10,  # Very low default value
         label="N-Shift Consistency (R7) Priority:",
+    )
+    r8_balance_slider = mo.ui.slider(
+        1,
+        200,
+        value=150,  # Very low default value
+        label="Hour under Max Fairness (R8) Priority:",
     )
 
 
@@ -256,6 +262,7 @@ def _(df_input, mo):
         r6_consistency_slider,
         r7_consistency_checkbox,
         r7_consistency_slider,
+        r8_balance_slider,
         run_button,
         set_solving,
     )
@@ -279,6 +286,7 @@ def _(
     r6_consistency_slider,
     r7_consistency_checkbox,
     r7_consistency_slider,
+    r8_balance_slider,
     run_button,
 ):
     # Compose the controls stack
@@ -300,6 +308,8 @@ def _(
     controls_list.append(r7_consistency_checkbox)
     if r7_consistency_checkbox.value:
         controls_list.append(r7_consistency_slider)
+    if r4_leq_checkbox.value:
+        controls_list.append(r8_balance_slider)
 
 
     if df_input is not None and df_shifts is not None:
@@ -328,44 +338,6 @@ def _(df_input, division_selector):
 
 
 @app.cell
-def _(col_date, df_input_filtered, df_shifts, mo, pd):
-    # cell 6: Minimum Ambulance Estimate
-
-    def estimate_min_ambulances(df_input_filtered, df_shifts, col_date):
-        if df_input_filtered is None or df_shifts is None:
-            return None
-
-        dates = sorted(df_input_filtered[col_date].unique())
-        shifts = df_shifts['Shift'].tolist() + ['O']
-        shift_attrs = {row['Shift']: {'base_hours': row['Working_Hour']} for _, row in df_shifts.iterrows()}
-        shift_attrs['O'] = {'base_hours': 0}
-        from collections import defaultdict
-        weeks = defaultdict(list)
-        for d in dates:
-            weeks[d - pd.Timedelta(days=d.weekday())].append(d)
-        demand = { (row[col_date], row['Shift']): row['DAA'] for _, row in df_input_filtered.iterrows() }
-        min_ambs_per_week = []
-        for week_start, week_dates in weeks.items():
-            total_hours = 0
-            for d in week_dates:
-                for s in shifts:
-                    if s != 'O':
-                        total_hours += demand.get((d, s), 0) * shift_attrs[s]['base_hours']
-            min_ambs = (total_hours + 47) // 48  # ceiling division for 48-hour week
-            min_ambs_per_week.append(min_ambs)
-        if min_ambs_per_week:
-            return max(min_ambs_per_week)
-        else:
-            return None
-
-    min_ambulances_estimate = estimate_min_ambulances(df_input_filtered, df_shifts, col_date)
-    min_amb_display = mo.md(f"**Estimated minimum ambulances needed:** {min_ambulances_estimate if min_ambulances_estimate is not None else 'N/A'}")
-    min_amb_display
-
-    return
-
-
-@app.cell
 def _(
     allow_double_nights_checkbox,
     allow_triple_nights_checkbox,
@@ -387,6 +359,7 @@ def _(
     r6_consistency_slider,
     r7_consistency_checkbox,
     r7_consistency_slider,
+    r8_balance_slider,
     run_button,
     set_solving,
     timedelta,
@@ -574,7 +547,7 @@ def _(
                                 _actual_hours_var == _shift_attrs[_s]["base_hours"] + _hour_adjust[(_d, _a, _s)]
                             ).OnlyEnforceIf(_assign[(_d, _a, _s)])
                             _actual_hours_vars[(_d, _a, _s)] = _actual_hours_var
-        
+
             if r4_average_checkbox.value:
                 # Average mode: total hours over the whole period must be ≤ 48 * number of weeks if relaxed, else ==
                 num_weeks = len(_weeks)
@@ -603,7 +576,7 @@ def _(
                             _model.Add(sum(_weekly_hours_expr) == 48)
 
 
-            # === SOFT CONSTRAINTS (R5, R6, R7) ===
+            # === SOFT CONSTRAINTS (R5, R6, R7, R8) ===
             _objective_terms = []
 
             # R5: Fairness of Tough Shifts (Squared Deviation, Hints, Tight Bounds)
@@ -696,6 +669,48 @@ def _(
                         r7_consistency_slider.value
                         * (sum(n_shifts_for_this_amb) - 1)
                     )
+
+            # === R8
+            if r8_balance_slider is not None:
+                num_weeks = len(_weeks)
+                max_total_hours = 48 * num_weeks
+        
+                # For each ambulance, create IntVars for total hours and hours under max
+                total_hours_vars = []
+                hours_under_max_vars = []
+                for _a in _ambulances:
+                    total_hours_var = _model.NewIntVar(0, max_total_hours, f"total_hours_{_a}")
+                    _model.Add(
+                        total_hours_var == sum(
+                            _actual_hours_vars[(_d, _a, _s)]
+                            for _d in _dates for _s in _shifts
+                            if (_d, _a, _s) in _actual_hours_vars
+                        )
+                    )
+                    total_hours_vars.append(total_hours_var)
+                    hours_under_max_var = _model.NewIntVar(0, max_total_hours, f"hours_under_max_{_a}")
+                    _model.Add(hours_under_max_var == max_total_hours - total_hours_var)
+                    hours_under_max_vars.append(hours_under_max_var)
+        
+                total_under_max = _model.NewIntVar(0, max_total_hours * _num_ambulances, "total_under_max")
+                _model.Add(total_under_max == sum(hours_under_max_vars))
+            
+                mean_hours_under_max = _model.NewIntVar(0, max_total_hours, "mean_hours_under_max")
+                _model.AddDivisionEquality(mean_hours_under_max, total_under_max, _num_ambulances)
+
+        
+                r8_sq_devs = []
+                for var in hours_under_max_vars:
+                    diff = _model.NewIntVar(-max_total_hours, max_total_hours, f"diff_{var.Name()}")
+                    _model.Add(diff == var - mean_hours_under_max)
+                    sq_dev = _model.NewIntVar(0, max_total_hours * max_total_hours, f"sq_dev_{var.Name()}")
+                    _model.AddMultiplicationEquality(sq_dev, [diff, diff])
+                    r8_sq_devs.append(sq_dev)
+        
+                _objective_terms.append(
+                    r8_balance_slider.value * sum(r8_sq_devs)
+                )
+
             # End Soft Constraint
 
             # === Decision Strategy for Assignment Variables ===
@@ -726,7 +741,7 @@ def _(
             if _objective_terms:
                 _model.Minimize(sum(_objective_terms))
             _solver = cp_model.CpSolver()
-            _solver.parameters.max_time_in_seconds = 300.0
+            _solver.parameters.max_time_in_seconds = 180.0
             _solver.parameters.num_search_workers = (
                 6 
             )
@@ -838,6 +853,12 @@ def _(date, df_schedule, df_shifts, mo, pd, timedelta):
             # Compute total working hours for each ambulance across the whole period
             _total_hours_whole_period = df_schedule.groupby("Ambulance")["Actual_Hours"].sum()
             _calendar_df["Total Working Hours"] = _total_hours_whole_period.reindex(_calendar_df.index)
+
+            # Calculate number of weeks in your schedule
+            _number_of_weeks = len(df_schedule["WeekStart"].unique())
+            _max_total_hours = 48 * _number_of_weeks
+            _hours_under_max = _max_total_hours - _total_hours_whole_period
+            _calendar_df["Hours Under Max"] = _hours_under_max.reindex(_calendar_df.index)
 
             _calendar_df["Total Night Shifts"] = (
                 night_shift_counts.reindex(_calendar_df.index)
@@ -965,6 +986,12 @@ def _(
             _total_hours_whole_period = df_schedule.groupby("Ambulance")["Actual_Hours"].sum()
 
             _calendar_df["Total Working Hours"] = _total_hours_whole_period.reindex(_calendar_df.index)
+
+            # Calculate number of weeks in your schedule
+            _number_of_weeks = len(df_schedule["WeekStart"].unique())
+            _max_total_hours = 48 * _number_of_weeks
+            _hours_under_max = _max_total_hours - _total_hours_whole_period
+            _calendar_df["Hours Under Max"] = _hours_under_max.reindex(_calendar_df.index)
 
             _calendar_df["Total Night Shifts"] = (
                 export_night_shift_counts.reindex(_calendar_df.index)

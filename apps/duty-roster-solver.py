@@ -163,7 +163,7 @@ def _(df_input, df_shifts, mo):
     return (input_error,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(df_input, mo):
     # cell 4: Solver Settings
     # Define the state variable to track if the solver is running.
@@ -268,7 +268,7 @@ def _(df_input, mo):
     )
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     allow_double_nights_checkbox,
     allow_triple_nights_checkbox,
@@ -321,7 +321,7 @@ def _(
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(df_input, division_selector):
     # Filtered INPUT DataFrame
     if (
@@ -446,7 +446,14 @@ def _(
                             sum(_assign[(_d, _a, _s)] for _a in _ambulances)
                             == _demand[(_d, _s)]
                         )
-                    
+            for _d in _dates:
+                for _s in _shifts:
+                    if _s != "O" and ((_d, _s) not in _demand or _demand[(_d, _s)] == 0):
+                        for _a in _ambulances:
+                            if (_d, _a, _s) in _assign:
+                                _model.Add(_assign[(_d, _a, _s)] == 0)
+
+
             for _d in _dates:
                 for _a in _ambulances:
                     _model.Add(
@@ -675,7 +682,7 @@ def _(
             if r8_balance_slider is not None:
                 num_weeks = len(_weeks)
                 max_total_hours = 48 * num_weeks
-        
+
                 # For each ambulance, create IntVars for total hours and hours under max
                 total_hours_vars = []
                 hours_under_max_vars = []
@@ -692,14 +699,14 @@ def _(
                     hours_under_max_var = _model.NewIntVar(0, max_total_hours, f"hours_under_max_{_a}")
                     _model.Add(hours_under_max_var == max_total_hours - total_hours_var)
                     hours_under_max_vars.append(hours_under_max_var)
-        
+
                 total_under_max = _model.NewIntVar(0, max_total_hours * _num_ambulances, "total_under_max")
                 _model.Add(total_under_max == sum(hours_under_max_vars))
-            
+
                 mean_hours_under_max = _model.NewIntVar(0, max_total_hours, "mean_hours_under_max")
                 _model.AddDivisionEquality(mean_hours_under_max, total_under_max, _num_ambulances)
 
-        
+
                 r8_sq_devs = []
                 for var in hours_under_max_vars:
                     diff = _model.NewIntVar(-max_total_hours, max_total_hours, f"diff_{var.Name()}")
@@ -707,7 +714,7 @@ def _(
                     sq_dev = _model.NewIntVar(0, max_total_hours * max_total_hours, f"sq_dev_{var.Name()}")
                     _model.AddMultiplicationEquality(sq_dev, [diff, diff])
                     r8_sq_devs.append(sq_dev)
-        
+
                 _objective_terms.append(
                     r8_balance_slider.value * sum(r8_sq_devs)
                 )

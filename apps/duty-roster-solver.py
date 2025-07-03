@@ -474,7 +474,6 @@ def _(
             n_shift_types = [s for s, attrs in _shift_attrs.items() if attrs["type"] == "N"]
 
             if allow_triple_nights_checkbox.value:
-                # Allow up to three consecutive N, but NOT four
                 for _a in _ambulances:
                     for _i in range(len(_dates) - 3):
                         d0, d1, d2, d3 = _dates[_i], _dates[_i + 1], _dates[_i + 2], _dates[_i + 3]
@@ -484,8 +483,36 @@ def _(
                                 _model.Add(
                                     sum(_assign[(_d, _a, n_shift)] for _d in [d0, d1, d2, d3]) <= 3
                                 )
+                            # If N on d0, d1, d2, then O on d3
+                            if all((_d, _a, n_shift) in _assign for _d in [d0, d1, d2]) and (d3, _a, "O") in _assign:
+                                _model.AddBoolOr([
+                                    _assign[(d0, _a, n_shift)].Not(),
+                                    _assign[(d1, _a, n_shift)].Not(),
+                                    _assign[(d2, _a, n_shift)].Not(),
+                                    _assign[(d3, _a, "O")]
+                                ])
+                    # For single or double N not followed by N, enforce O
+                    for _i in range(len(_dates) - 1):
+                        d0, d1 = _dates[_i], _dates[_i + 1]
+                        for n_shift in n_shift_types:
+                            if (d0, _a, n_shift) in _assign and (d1, _a, "O") in _assign and (d1, _a, n_shift) in _assign:
+                                _model.AddBoolOr([
+                                    _assign[(d0, _a, n_shift)].Not(),
+                                    _assign[(d1, _a, "O")],
+                                    _assign[(d1, _a, n_shift)]
+                                ])
+                    for _i in range(len(_dates) - 2):
+                        d0, d1, d2 = _dates[_i], _dates[_i + 1], _dates[_i + 2]
+                        for n_shift in n_shift_types:
+                            if all((_d, _a, n_shift) in _assign for _d in [d0, d1]) and (d2, _a, "O") in _assign and (d2, _a, n_shift) in _assign:
+                                _model.AddBoolOr([
+                                    _assign[(d0, _a, n_shift)].Not(),
+                                    _assign[(d1, _a, n_shift)].Not(),
+                                    _assign[(d2, _a, "O")],
+                                    _assign[(d2, _a, n_shift)]
+                                ])
+
             elif allow_double_nights_checkbox.value:
-                # Allow up to two consecutive N, but NOT three
                 for _a in _ambulances:
                     for _i in range(len(_dates) - 2):
                         d0, d1, d2 = _dates[_i], _dates[_i + 1], _dates[_i + 2]
@@ -495,16 +522,35 @@ def _(
                                 _model.Add(
                                     sum(_assign[(_d, _a, n_shift)] for _d in [d0, d1, d2]) <= 2
                                 )
+                            # If N on d0 and d1, then O on d2
+                            if (d0, _a, n_shift) in _assign and (d1, _a, n_shift) in _assign and (d2, _a, "O") in _assign:
+                                _model.AddBoolOr([
+                                    _assign[(d0, _a, n_shift)].Not(),
+                                    _assign[(d1, _a, n_shift)].Not(),
+                                    _assign[(d2, _a, "O")]
+                                ])
+                    # For single N not followed by N, enforce O
+                    for _i in range(len(_dates) - 1):
+                        d0, d1 = _dates[_i], _dates[_i + 1]
+                        for n_shift in n_shift_types:
+                            if (d0, _a, n_shift) in _assign and (d1, _a, "O") in _assign and (d1, _a, n_shift) in _assign:
+                                _model.AddBoolOr([
+                                    _assign[(d0, _a, n_shift)].Not(),
+                                    _assign[(d1, _a, "O")],
+                                    _assign[(d1, _a, n_shift)]
+                                ])
+
             else:
-                # Forbid two consecutive N
                 for _a in _ambulances:
                     for _i in range(len(_dates) - 1):
                         d0, d1 = _dates[_i], _dates[_i + 1]
                         for n_shift in n_shift_types:
-                            if all((_d, _a, n_shift) in _assign for _d in [d0, d1]):
-                                _model.Add(
-                                    sum(_assign[(_d, _a, n_shift)] for _d in [d0, d1]) <= 1
-                                )
+                            if (d0, _a, n_shift) in _assign and (d1, _a, "O") in _assign:
+                                # If N on d0, then O on d1
+                                _model.AddBoolOr([
+                                    _assign[(d0, _a, n_shift)].Not(),
+                                    _assign[(d1, _a, "O")]
+                                ])
 
             # === R4 ===#
             # Prepare actual_hours_vars for all (d, a, s)
@@ -583,13 +629,13 @@ def _(
                     )
                     _model.AddMultiplicationEquality(_sq_dev, [_diff, _diff])
                     fairness_sq_devs.append(_sq_dev)
-                
+
                 _objective_terms.append(
                     r5_fairness_slider.value * sum(fairness_sq_devs)
                 )
-        
+
             # R6: Consistency of Day Shifts (Soft)
-    
+
             if r6_consistency_checkbox and r6_consistency_slider is not None:
                 for _a in _ambulances:
                     _d_shifts_for_this_amb = []
@@ -610,7 +656,7 @@ def _(
                         r6_consistency_slider.value
                         * (sum(_d_shifts_for_this_amb) - 1)
                     )
-        
+
             # R7: Consistency of N Shifts (Soft)
             if r7_consistency_checkbox and r7_consistency_slider is not None:
                 n_shift_types = [
@@ -632,7 +678,7 @@ def _(
                         * (sum(n_shifts_for_this_amb) - 1)
                     )
             # End Soft Constraint
-        
+
             # === Decision Strategy for Assignment Variables ===
             assign_vars = [
                 _assign[(_d, _a, _s)]
@@ -661,7 +707,7 @@ def _(
             if _objective_terms:
                 _model.Minimize(sum(_objective_terms))
             _solver = cp_model.CpSolver()
-            _solver.parameters.max_time_in_seconds = 240.0
+            _solver.parameters.max_time_in_seconds = 300.0
             _solver.parameters.num_search_workers = (
                 6 
             )

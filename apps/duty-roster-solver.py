@@ -38,6 +38,7 @@ def _(mo):
             An ambulance that works a night shift (`Type` 'N') *must* be assigned an "Off" shift ('O') on the immediately following day.
 
         *   **R4: 48-Hour Work Week**
+            Each ambulance must work either (i) **exactly 48 hours** or (ii) an **average of 48 hours** per week (Monday to Sunday). The solver is allowed to use the flexibility of `Flexible` shifts (adjusting their hours within the `Working_Hour_Delta`) to achieve this target.
 
     ## **Soft Goals**
 

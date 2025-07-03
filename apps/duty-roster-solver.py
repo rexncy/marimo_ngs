@@ -203,6 +203,11 @@ def _(df_input, mo):
         label="Allow average 48 hours per week (over the whole period)",
     )
 
+    r4_leq_checkbox = mo.ui.checkbox(
+        value=False,
+        label="Allow working hours to be ≤ 48 (instead of exactly 48)",
+    )
+
     # The run_button is disabled when get_solving() is True.
     run_button = mo.ui.run_button(
         label="🚀 Generate Schedule", disabled=get_solving()
@@ -244,6 +249,7 @@ def _(df_input, mo):
         get_solving,
         number_of_amb_input,
         r4_average_checkbox,
+        r4_leq_checkbox,
         r5_fairness_checkbox,
         r5_fairness_slider,
         r6_consistency_checkbox,
@@ -266,6 +272,7 @@ def _(
     mo,
     number_of_amb_input,
     r4_average_checkbox,
+    r4_leq_checkbox,
     r5_fairness_checkbox,
     r5_fairness_slider,
     r6_consistency_checkbox,
@@ -281,6 +288,7 @@ def _(
     controls_list.append(run_button)
     controls_list.append(mo.md("---"))
     controls_list.append(r4_average_checkbox)
+    controls_list.append(r4_leq_checkbox)
     controls_list.append(allow_double_nights_checkbox)
     controls_list.append(allow_triple_nights_checkbox)
     controls_list.append(r5_fairness_checkbox)
@@ -372,6 +380,7 @@ def _(
     number_of_amb_input,
     pd,
     r4_average_checkbox,
+    r4_leq_checkbox,
     r5_fairness_checkbox,
     r5_fairness_slider,
     r6_consistency_checkbox,
@@ -553,36 +562,46 @@ def _(
                                 ])
 
             # === R4 ===#
-            # Prepare actual_hours_vars for all (d, a, s)
+            # Prepare actual_hours_vars for all valid (_d, _a, _s)
             _actual_hours_vars = {}
             for _d in _dates:
                 for _a in _ambulances:
                     for _s in _shifts:
-                        _actual_hours_var = _model.NewIntVar(0, 24, f"hours_{_a}_{_d}_{_s}")
-                        _model.Add(_actual_hours_var == 0).OnlyEnforceIf(_assign[(_d, _a, _s)].Not())
-                        _model.Add(
-                            _actual_hours_var == _shift_attrs[_s]["base_hours"] + _hour_adjust[(_d, _a, _s)]
-                        ).OnlyEnforceIf(_assign[(_d, _a, _s)])
-                        _actual_hours_vars[(_d, _a, _s)] = _actual_hours_var
-
+                        if (_d, _a, _s) in _assign:
+                            _actual_hours_var = _model.NewIntVar(0, 24, f"hours_{_a}_{_d}_{_s}")
+                            _model.Add(_actual_hours_var == 0).OnlyEnforceIf(_assign[(_d, _a, _s)].Not())
+                            _model.Add(
+                                _actual_hours_var == _shift_attrs[_s]["base_hours"] + _hour_adjust[(_d, _a, _s)]
+                            ).OnlyEnforceIf(_assign[(_d, _a, _s)])
+                            _actual_hours_vars[(_d, _a, _s)] = _actual_hours_var
+        
             if r4_average_checkbox.value:
-                # Allow average: total hours over the whole period must be 48 * number of weeks
+                # Average mode: total hours over the whole period must be ≤ 48 * number of weeks if relaxed, else ==
                 num_weeks = len(_weeks)
                 for _a in _ambulances:
                     _total_hours_expr = [
                         _actual_hours_vars[(_d, _a, _s)]
                         for _d in _dates for _s in _shifts
+                        if (_d, _a, _s) in _actual_hours_vars
                     ]
-                    _model.Add(sum(_total_hours_expr) == 48 * num_weeks)
+                    if r4_leq_checkbox.value:
+                        _model.Add(sum(_total_hours_expr) <= 48 * num_weeks)
+                    else:
+                        _model.Add(sum(_total_hours_expr) == 48 * num_weeks)
             else:
-                # Enforce exactly 48 hours per week per ambulance
+                # Per-week mode: each week must be ≤ 48 if relaxed, else ==
                 for _week_start, _week_dates in _weeks.items():
                     for _a in _ambulances:
                         _weekly_hours_expr = [
                             _actual_hours_vars[(_d, _a, _s)]
                             for _d in _week_dates for _s in _shifts
+                            if (_d, _a, _s) in _actual_hours_vars
                         ]
-                        _model.Add(sum(_weekly_hours_expr) == 48)
+                        if r4_leq_checkbox.value:
+                            _model.Add(sum(_weekly_hours_expr) <= 48)
+                        else:
+                            _model.Add(sum(_weekly_hours_expr) == 48)
+
 
             # === SOFT CONSTRAINTS (R5, R6, R7) ===
             _objective_terms = []

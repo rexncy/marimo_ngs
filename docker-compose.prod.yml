@@ -1,0 +1,20 @@
+services:
+  marimo-ngs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: marimo-ngs
+    ports:
+      - "${HOST_PORT}:${CONTAINER_PORT}"
+    env_file: .env
+    volumes:
+      - apps_files:/app/apps/files
+    restart: unless-stopped
+    networks:
+      - cloudflare-production-tunnel
+volumes:
+  apps_files:
+
+networks:
+  cloudflare-production-tunnel:
+    external: true

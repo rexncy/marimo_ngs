@@ -22,9 +22,9 @@ def _(mo):
 @app.cell
 def _():
     # Files base dir
-    FILE_DIR = 'apps/ngs-fairness-solver-files'
+    FILE_DIR = 'apps/files/ngs-fairness-solver-files'
     # Files base dir
-    OUTPUT_FILE_DIR = 'apps/ngs-fairness-solver-files-output'
+    OUTPUT_FILE_DIR = 'apps/files/ngs-fairness-solver-files-output'
     return FILE_DIR, OUTPUT_FILE_DIR
 
 

@@ -60,7 +60,7 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(Path, mo):
     # Global UI elements for cross-cell reference
-    FILE_DIR = "apps/duty-roster-solver-files"
+    FILE_DIR = "apps/files/duty-roster-solver-files"
 
     file_browser = mo.ui.file_browser(
         initial_path=Path(FILE_DIR),

@@ -74,6 +74,7 @@ def _(Path, mo):
         filetypes=[".xlsx"], label="Or upload your own roster file (.xlsx):"
     )
 
+
     file_input_tabs = mo.ui.tabs(
         {
             "Choose Existing": file_browser,
@@ -83,6 +84,25 @@ def _(Path, mo):
 
     file_input_tabs
     return FILE_DIR, file_browser, file_uploader
+
+
+@app.cell
+def _(file_browser, mo):
+    delete_button = mo.ui.run_button(label="Delete selected file")
+
+    delete_button if file_browser.path() else None
+    return (delete_button,)
+
+
+@app.cell
+def _(delete_button, file_browser, mo):
+    if delete_button.value and file_browser.path():
+        import os
+        _selected_path = str(file_browser.path())
+        if os.path.isfile(_selected_path):
+            os.remove(_selected_path)
+            mo.output.replace(f"Deleted: {_selected_path}")
+    return
 
 
 @app.cell(hide_code=True)

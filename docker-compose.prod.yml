@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: marimo-ngs
     ports:
-      - "${HOST_PORT}:${CONTAINER_PORT}"
+      - "${PORT}:8080"
     env_file: .env
     volumes:
       - apps_files:/app/apps/files

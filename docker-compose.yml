@@ -1,0 +1,15 @@
+services:
+  marimo-ngs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: marimo-ngs
+    ports:
+      - "8080:8080"
+    #environment:
+      # Add your environment variables here, for example:
+      # - ENV_VAR_NAME=value
+    #volumes:
+      # Uncomment and edit if you want to mount local folders, e.g. for development:
+      # - ./data:/app/data
+    restart: unless-stopped

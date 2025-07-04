@@ -36,7 +36,7 @@ app = FastAPI()
 # Set up Jinja2 templates
 templates = Jinja2Templates(directory=templates_dir)
 # Simulated user database (replace with a real database in production)
-users = {"admin": "@Dmin+2025", "ao": "@O+2025", "uat":"uat"}
+users = {"admin": "Admin+2025", "ao": "27"}
 
 
 class LoginForm(BaseModel):
@@ -129,7 +129,7 @@ if __name__ == "__main__":
 
     uvicorn.run(
         app,
-        host=os.getenv("HOST", "localhost"),
-        port=int(os.getenv("PORT", 8000)),
+        host=os.getenv("HOST", "0.0.0.0"),
+        port=int(os.getenv("PORT", 8080)),
         log_level="info",
     )

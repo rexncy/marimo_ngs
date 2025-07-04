@@ -90,7 +90,16 @@ def _(Path, mo):
 def _(file_browser, mo):
     delete_button = mo.ui.run_button(label="Delete selected file")
 
-    delete_button if file_browser.path() else None
+    _download = mo.download(
+        data=lambda: open(file_browser.path(index=0), "rb"),
+        filename=file_browser.path(index=0).name if file_browser.value else '',
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        label="Download Selected file"
+    )
+
+    h_stack = mo.hstack(items=[delete_button, _download],align="start")
+
+    h_stack if file_browser.value else None
     return (delete_button,)
 
 

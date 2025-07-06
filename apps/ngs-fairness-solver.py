@@ -13,6 +13,53 @@ def _():
     return Path, os, pd, pulp
 
 
+@app.cell
+def _(mo):
+    title = 'NGS Fairness Solver'
+
+    md = mo.md(text="""
+    ## Model Overview: Fair Sparse Deployment with Proportional Fairness
+
+    **Objective:**  
+    Optimize staff deployment across periods, watches, and divisions to:
+
+    - Meet period-by-period demand for each rank (SA, A)
+    - Achieve proportional fairness by division and watch (configurable targets in input excel)
+    - Minimize concentration (sparsity) of assignments
+    - Balance fairness priorities via weighted penalties
+
+    **Decision Variables:**
+
+    - `x[rank, watch, division, period]`: Number of staff assigned
+    - `z[rank, period]`: Max assignments per rank and period (for sparsity)
+    - Slack variables: Allow controlled deviations from fairness constraints
+
+    **Key Constraints:**
+
+    - **R1: Demand Satisfaction:**  
+      For each period and rank, total assignments = required demand
+    - **R2: Division Fairness (all periods):**  
+      Each division receives its target share (within tolerance) across all periods
+    - **R3: Watch Fairness (all periods):**  
+      Each watch receives its target share (within tolerance) across all periods
+    - **R4: Division-Watch Proportion (all periods):**  
+      Each division-watch pair aligns with combined targets (soft constraint, penalized by slack)
+    - **R5: Division Fairness (within each period):**  
+      Each division receives its target share of demand in each period (soft constraint, lower penalty)
+
+    **Objective Function:**
+
+    Minimize:
+
+    - Total sparsity (`z` variables)
+    - Weighted sum of slack variables for division-watch and per-period division fairness (with configurable weights to prioritize constraints)
+
+    """)
+
+    mo.accordion(items={title: md})
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""# Load Input File""")
@@ -147,8 +194,8 @@ def _(mo):
     # Tolerance for overall ratio constraints (in %)
     TOLERANCE = mo.ui.number(
         start=0,
-        stop=100,
-        step=1,
+        stop=10,
+        step=0.1,
         value=0,
         label="Tolerance for overall ratio constraints (in %)",
     )
@@ -178,7 +225,7 @@ def _(
             lowBound=0,
             cat='Integer'
         )
-    
+
         # Max concentration per period and rank (for sparsity)
         z = pulp.LpVariable.dicts(
             "z",
@@ -186,7 +233,7 @@ def _(
             lowBound=0,
             cat='Integer'
         )
-    
+
         # Slack variables for intra-division watch ratios (across all periods)
         slack_divwatch_pos = pulp.LpVariable.dicts(
             "slack_divwatch_pos",
@@ -194,28 +241,28 @@ def _(
             lowBound=0,
             cat='Continuous'
         )
-    
+
         slack_divwatch_neg = pulp.LpVariable.dicts(
             "slack_divwatch_neg",
             ((rank, d, w) for rank in ranks for d in divisions for w in watches),
             lowBound=0,
             cat='Continuous'
         )
-    
+
         for idx, p in enumerate(periods):
             for rank in ranks:
                 period_demand = periods_df.loc[idx, rank]
                 model += (pulp.lpSum((x[rank, w, d, p] for w in watches for d in divisions)) == period_demand, f'Demand_{rank}_{p}')
-    
+
         for rank in ranks:
             total_rank = periods_df[rank].sum()
             for w in watches:
                 target = watch_targets[w] * total_rank
                 tol = max(1, int(round(TOLERANCE.value * total_rank)))
                 actual = pulp.lpSum((x[rank, w, d, p] for d in divisions for p in periods))
-                model += (actual >= target - tol, f'WatchLow_{rank}_{w}')
-                model += (actual <= target + tol, f'WatchHigh_{rank}_{w}')
-    
+                model += (actual >= target - tol * 0.01, f'WatchLow_{rank}_{w}')
+                model += (actual <= target + tol * 0.01, f'WatchHigh_{rank}_{w}')
+
         for rank in ranks:
             total_rank = periods_df[rank].sum()
             for d in divisions:
@@ -224,13 +271,13 @@ def _(
                 actual = pulp.lpSum((x[rank, w, d, p] for w in watches for p in periods))
                 model += (actual >= target - tol, f'DivLow_{rank}_{d}')
                 model += (actual <= target + tol, f'DivHigh_{rank}_{d}')
-    
+
         for rank in ranks:
             for p in periods:
                 for w in watches:
                     for d in divisions:
                         model += (x[rank, w, d, p] <= z[rank, p], f'Sparse_{rank}_{w}_{d}_{p}')
-    
+
         for rank in ranks:
             total_rank = periods_df[rank].sum()
             for d in divisions:
@@ -240,8 +287,37 @@ def _(
                     actual = pulp.lpSum((x[rank, w, d, p] for p in periods))
                     model += (actual - target <= slack_divwatch_pos[rank, d, w])
                     model += (target - actual <= slack_divwatch_neg[rank, d, w])
-    
-        model += (pulp.lpSum((z[rank, p] for rank in ranks for p in periods)) + 0.1 * pulp.lpSum((slack_divwatch_pos[rank, d, w] + slack_divwatch_neg[rank, d, w] for rank in ranks for d in divisions for w in watches)), 'Total_Objective')
+
+        slack_divperiod_pos = pulp.LpVariable.dicts(
+            "slack_divperiod_pos",
+            ((rank, d, p) for rank in ranks for d in divisions for p in periods),
+            lowBound=0,
+            cat='Continuous'
+        )
+
+        slack_divperiod_neg = pulp.LpVariable.dicts(
+            "slack_divperiod_neg",
+            ((rank, d, p) for rank in ranks for d in divisions for p in periods),
+            lowBound=0,
+            cat='Continuous'
+        )
+
+        for idx, p in enumerate(periods):
+            for rank in ranks:
+                period_demand = periods_df.loc[idx, rank]
+                target = division_targets[d] * period_demand
+                for d in divisions:
+                    actual = pulp.lpSum(x[rank, w, d, p] for w in watches)
+                    model += (actual - target <= slack_divperiod_pos[rank, d, p], f'DivPeriodPos_{rank}_{d}_{p}')
+                    model += (target - actual <= slack_divperiod_neg[rank, d, p], f'DivPeriodNeg_{rank}_{d}_{p}')
+
+
+        model += (
+            pulp.lpSum(z[rank, p] for rank in ranks for p in periods)
+            + 0.1 * pulp.lpSum(slack_divwatch_pos[rank, d, w] + slack_divwatch_neg[rank, d, w] for rank in ranks for d in divisions for w in watches)
+            + 0.01 * pulp.lpSum(slack_divperiod_pos[rank, d, p] + slack_divperiod_neg[rank, d, p] for rank in ranks for d in divisions for p in periods),
+            'Total_Objective'
+        )
 
     return model, x
 

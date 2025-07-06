@@ -8,9 +8,9 @@ app = marimo.App()
 def _():
     import pulp
     import pandas as pd
-    import os
+    import os,io
     from pathlib import Path
-    return Path, os, pd, pulp
+    return Path, io, os, pd, pulp
 
 
 @app.cell

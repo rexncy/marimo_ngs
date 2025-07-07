@@ -10,7 +10,7 @@ def _():
     import pandas as pd
     import os,io
     from pathlib import Path
-    return Path, io, os, pd, pulp
+    return Path, io, os, pd
 
 
 @app.cell
@@ -220,129 +220,150 @@ def _(
     TOLERANCE_WATCH,
     division_targets,
     divisions,
+    mo,
     periods,
     periods_df,
-    pulp,
     ranks,
     targets_df,
     watch_targets,
     watches,
 ):
-    model = pulp.LpProblem("Fair_Sparse_Deployment", pulp.LpMinimize)
+    from ortools.sat.python import cp_model
+
+
+    model = cp_model.CpModel()
+
     if periods_df is not None and targets_df is not None:
-        # Decision variables: x[rank, watch, division, period]
-        x = pulp.LpVariable.dicts(
-            "x",
-            ((rank, w, d, p) for rank in ranks for w in watches for d in divisions for p in periods),
-            lowBound=0,
-            cat='Integer'
-        )
+        # Decision variables: x[rank, w, d, p]
+        x = {}
+        for rank in ranks:
+            for w in watches:
+                for d in divisions:
+                    for p in periods:
+                        x[rank, w, d, p] = model.NewIntVar(0, cp_model.INT32_MAX, f'x_{rank}_{w}_{d}_{p}')
 
-        # Max concentration per period and rank (for sparsity)
-        z = pulp.LpVariable.dicts(
-            "z",
-            ((rank, p) for rank in ranks for p in periods),
-            lowBound=0,
-            cat='Integer'
-        )
+        # Auxiliary variables for sparsity: z[rank, p]
+        z = {}
+        for rank in ranks:
+            for p in periods:
+                z[rank, p] = model.NewIntVar(0, cp_model.INT32_MAX, f'z_{rank}_{p}')
 
-        # Slack variables for intra-division watch ratios (across all periods)
-        slack_divwatch_pos = pulp.LpVariable.dicts(
-            "slack_divwatch_pos",
-            ((rank, d, w) for rank in ranks for d in divisions for w in watches),
-            lowBound=0,
-            cat='Continuous'
-        )
+        # Slack variables for soft constraints
+        slack_divwatch_pos, slack_divwatch_neg = {}, {}
+        for rank in ranks:
+            for d in divisions:
+                for w in watches:
+                    slack_divwatch_pos[rank, d, w] = model.NewIntVar(0, cp_model.INT32_MAX, f'slack_divwatch_pos_{rank}_{d}_{w}')
+                    slack_divwatch_neg[rank, d, w] = model.NewIntVar(0, cp_model.INT32_MAX, f'slack_divwatch_neg_{rank}_{d}_{w}')
 
-        slack_divwatch_neg = pulp.LpVariable.dicts(
-            "slack_divwatch_neg",
-            ((rank, d, w) for rank in ranks for d in divisions for w in watches),
-            lowBound=0,
-            cat='Continuous'
-        )
-
+        # Hard constraint: meet period demand for each rank
         for idx, p in enumerate(periods):
             for rank in ranks:
-                period_demand = periods_df.loc[idx, rank]
-                model += (pulp.lpSum((x[rank, w, d, p] for w in watches for d in divisions)) == period_demand, f'Demand_{rank}_{p}')
+                period_demand = int(periods_df.loc[idx, rank])
+                model.Add(
+                    sum(x[rank, w, d, p] for w in watches for d in divisions) == period_demand
+                )
 
+        # Hard constraints: assignments to each watch within tolerance of targets for each rank
         for rank in ranks:
-            total_rank = periods_df[rank].sum()
+            total_rank = int(periods_df[rank].sum())
             for w in watches:
-                target = watch_targets[w] * total_rank
-                tol = int(round(TOLERANCE_DIV.value * total_rank))
-                actual = pulp.lpSum((x[rank, w, d, p] for d in divisions for p in periods))
-                model += (actual >= target - (tol * 0.01), f'WatchLow_{rank}_{w}')
-                model += (actual <= target + (tol * 0.01), f'WatchHigh_{rank}_{w}')
+                target = int(round(watch_targets[w] * total_rank))
+                tol = int(round(TOLERANCE_DIV.value * 0.01 * total_rank))
+                actual = sum(x[rank, w, d, p] for d in divisions for p in periods)
+            
+                model.Add(actual >= target - tol)
+                model.Add(actual <= target + tol)
 
+        # Hard constraints: assignments to each division within tolerance of targets for each rank
         for rank in ranks:
-            total_rank = periods_df[rank].sum()
+            total_rank = int(periods_df[rank].sum())
             for d in divisions:
-                target = division_targets[d] * total_rank
-                tol = int(round(TOLERANCE_WATCH.value * total_rank))
-                actual = pulp.lpSum((x[rank, w, d, p] for w in watches for p in periods))
-                model += (actual >= target - (tol * 0.01), f'DivLow_{rank}_{d}')
-                model += (actual <= target + (tol * 0.01), f'DivHigh_{rank}_{d}')
+                target = int(round(division_targets[d] * total_rank))
+                tol = int(round(TOLERANCE_WATCH.value * 0.01 * total_rank))
+                actual = sum(x[rank, w, d, p] for w in watches for p in periods)
+                model.Add(actual >= target - tol)
+                model.Add(actual <= target + tol)
 
+        # Sparsity constraint: no (watch, division) assignment exceeds z[rank, p]
         for rank in ranks:
             for p in periods:
                 for w in watches:
                     for d in divisions:
-                        model += (x[rank, w, d, p] <= z[rank, p], f'Sparse_{rank}_{w}_{d}_{p}')
+                        model.Add(x[rank, w, d, p] <= z[rank, p])
 
+        # Soft constraints: intra-division watch ratio deviations
         for rank in ranks:
-            total_rank = periods_df[rank].sum()
+            total_rank = int(periods_df[rank].sum())
             for d in divisions:
-                total_div = division_targets[d] * total_rank
+                total_div = int(round(division_targets[d] * total_rank))
                 for w in watches:
-                    target = watch_targets[w] * total_div
-                    actual = pulp.lpSum((x[rank, w, d, p] for p in periods))
-                    model += (actual - target <= slack_divwatch_pos[rank, d, w])
-                    model += (target - actual <= slack_divwatch_neg[rank, d, w])
+                    target = int(round(watch_targets[w] * total_div))
+                    actual = sum(x[rank, w, d, p] for p in periods)
+                    model.Add(actual - target <= slack_divwatch_pos[rank, d, w])
+                    model.Add(target - actual <= slack_divwatch_neg[rank, d, w])
 
-        slack_divperiod_pos = pulp.LpVariable.dicts(
-            "slack_divperiod_pos",
-            ((rank, d, p) for rank in ranks for d in divisions for p in periods),
-            lowBound=0,
-            cat='Continuous'
-        )
+        # Slack variables for intra-division period ratios
+        slack_divperiod_pos, slack_divperiod_neg = {}, {}
+        for rank in ranks:
+            for d in divisions:
+                for p in periods:
+                    slack_divperiod_pos[rank, d, p] = model.NewIntVar(0, cp_model.INT32_MAX, f'slack_divperiod_pos_{rank}_{d}_{p}')
+                    slack_divperiod_neg[rank, d, p] = model.NewIntVar(0, cp_model.INT32_MAX, f'slack_divperiod_neg_{rank}_{d}_{p}')
 
-        slack_divperiod_neg = pulp.LpVariable.dicts(
-            "slack_divperiod_neg",
-            ((rank, d, p) for rank in ranks for d in divisions for p in periods),
-            lowBound=0,
-            cat='Continuous'
-        )
-
+        # Soft constraints: intra-division period ratio deviations
         for idx, p in enumerate(periods):
             for rank in ranks:
-                period_demand = periods_df.loc[idx, rank]
-                target = division_targets[d] * period_demand
+                period_demand = int(periods_df.loc[idx, rank])
                 for d in divisions:
-                    actual = pulp.lpSum(x[rank, w, d, p] for w in watches)
-                    model += (actual - target <= slack_divperiod_pos[rank, d, p], f'DivPeriodPos_{rank}_{d}_{p}')
-                    model += (target - actual <= slack_divperiod_neg[rank, d, p], f'DivPeriodNeg_{rank}_{d}_{p}')
+                    target = int(round(division_targets[d] * period_demand))
+                    actual = sum(x[rank, w, d, p] for w in watches)
+                    model.Add(actual - target <= slack_divperiod_pos[rank, d, p])
+                    model.Add(target - actual <= slack_divperiod_neg[rank, d, p])
 
+        # Slack variables for inter-division watch ratio per period
+        slack_interdivwatch_pos, slack_interdivwatch_neg = {}, {}
+        for rank in ranks:
+            for w in watches:
+                for p in periods:
+                    slack_interdivwatch_pos[rank, w, p] = model.NewIntVar(0, cp_model.INT32_MAX, f'slack_interdivwatch_pos_{rank}_{w}_{p}')
+                    slack_interdivwatch_neg[rank, w, p] = model.NewIntVar(0, cp_model.INT32_MAX, f'slack_interdivwatch_neg_{rank}_{w}_{p}')
 
-        model += (
-            pulp.lpSum(z[rank, p] for rank in ranks for p in periods)
-            + 0.1 * pulp.lpSum(slack_divwatch_pos[rank, d, w] + slack_divwatch_neg[rank, d, w] for rank in ranks for d in divisions for w in watches)
-            + 0.01 * pulp.lpSum(slack_divperiod_pos[rank, d, p] + slack_divperiod_neg[rank, d, p] for rank in ranks for d in divisions for p in periods),
-            'Total_Objective'
+        # Soft constraints: inter-division watch ratio per period
+        for rank in ranks:
+            for w in watches:
+                for idx, p in enumerate(periods):
+                    period_demand = int(periods_df.loc[idx, rank])
+                    target = int(round(watch_targets[w] * period_demand))
+                    actual = sum(x[rank, w, d, p] for d in divisions)
+                    model.Add(actual - target <= slack_interdivwatch_pos[rank, w, p])
+                    model.Add(target - actual <= slack_interdivwatch_neg[rank, w, p])
+
+        # Objective function: minimize sparsity and penalize soft constraint violations (scale slack terms back down)
+        OBJ_SCALE = 1000  # or any large integer for precision
+
+        weight_sparsity = 1 * OBJ_SCALE         # 1000
+        weight_divwatch = int(0.1 * OBJ_SCALE)  # 100
+        weight_divperiod = int(0.5 * OBJ_SCALE)  # 50
+        weight_interdivwatch = int(0.3 * OBJ_SCALE)  # 10
+    
+        model.Minimize(
+            weight_sparsity * sum(z[rank, p] for rank in ranks for p in periods)
+            + weight_divwatch * sum(slack_divwatch_pos[rank, d, w] + slack_divwatch_neg[rank, d, w]
+                                    for rank in ranks for d in divisions for w in watches)
+            + weight_divperiod * sum(slack_divperiod_pos[rank, d, p] + slack_divperiod_neg[rank, d, p]
+                                     for rank in ranks for d in divisions for p in periods)
+            + weight_interdivwatch * sum(slack_interdivwatch_pos[rank, w, p] + slack_interdivwatch_neg[rank, w, p]
+                                         for rank in ranks for w in watches for p in periods)
         )
 
-    return model, x
+        # Solve the model
+        solver = cp_model.CpSolver()
+        status = solver.Solve(model)
 
+        mo.output.replace(f'Solver status: {solver.StatusName(status)}')
 
-@app.cell
-def _(mo, model, pulp):
-    solver = pulp.PULP_CBC_CMD(msg=True)
-
-    model.solve(solver)
-
-    mo.output.replace(mo.md(f'Solver status:  {pulp.LpStatus[model.status]}'))
-
-    return
+    return cp_model, solver, status, x
 
 
 @app.cell(hide_code=True)
@@ -360,27 +381,28 @@ def _():
 
 @app.cell
 def _(
+    cp_model,
     division_targets,
     divisions,
     mo,
-    model,
     ordered_divisions,
     ordered_watches,
     pd,
     periods,
-    pulp,
     ranks,
+    solver,
+    status,
     watch_targets,
     watches,
     x,
 ):
-    if model.status == 1:
+    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
         deployment_data = []
         for rank_1 in ranks:
             for p_1 in periods:
                 for w_1 in watches:
                     for d_1 in divisions:
-                        val = int(pulp.value(x[rank_1, w_1, d_1, p_1]))
+                        val = solver.Value(x[rank_1, w_1, d_1, p_1])
                         deployment_data.append({'period': p_1, 'rank': rank_1, 'watch': w_1, 'division': d_1, 'count': val})
         results_df = pd.DataFrame(deployment_data)
 
@@ -388,7 +410,7 @@ def _(
         for rank_1 in ranks:
             rank_df = results_df[results_df['rank'] == rank_1]
             total = rank_df['count'].sum()
-
+    
             # --- Quick Summary ---
             summary_table = mo.ui.table(
                 pd.DataFrame({
@@ -398,17 +420,7 @@ def _(
                     "Watches": [len(watches)],
                 }).T.rename(columns={0: "Value"})
             )
-
-            # --- Download Button ---
-            """
-            download_button = mo.download(
-                data=lambda df=rank_df: df.to_csv(index=False),
-                filename=f"{rank_1}_deployment.csv",
-                mimetype="text/csv",
-                label=f"Download {rank_1} Deployment CSV"
-            )
-            """
-
+    
             # --- Deployments by Period (as nested tabs) ---
             period_tabs = {}
             for p_1 in periods:
@@ -423,27 +435,34 @@ def _(
                     mo.ui.table(grid)
                 ])
             deployments_by_period = mo.ui.tabs(period_tabs)
-
+    
             # --- Overall Proportions ---
             watch_actual = rank_df.groupby('watch')['count'].sum() / total
             div_actual = rank_df.groupby('division')['count'].sum() / total
-
+    
+            # Watch proportions
             watch_prop_df = pd.DataFrame({
                 "Actual": watch_actual,
                 "Target": pd.Series(watch_targets),
             })
             watch_prop_df["Delta"] = watch_prop_df["Actual"] - watch_prop_df["Target"]
-            watch_prop_df = watch_prop_df.applymap(lambda x: f"{x:.2%}" if isinstance(x, float) else x)
-            watch_prop_df["Delta"] = pd.to_numeric(watch_actual - pd.Series(watch_targets)).apply(lambda x: f"{x:+.2%}")
-
+    
+            # Format as percentage strings for display (do NOT use pd.to_numeric on percent strings)
+            watch_prop_df_fmt = watch_prop_df.copy()
+            for col in ["Actual", "Target", "Delta"]:
+                watch_prop_df_fmt[col] = watch_prop_df_fmt[col].apply(lambda x: f"{x:+.2%}" if col == "Delta" else f"{x:.2%}")
+    
+            # Division proportions
             div_prop_df = pd.DataFrame({
                 "Actual": div_actual,
                 "Target": pd.Series(division_targets),
             })
             div_prop_df["Delta"] = div_prop_df["Actual"] - div_prop_df["Target"]
-            div_prop_df = div_prop_df.applymap(lambda x: f"{x:.2%}" if isinstance(x, float) else x)
-            div_prop_df["Delta"] = pd.to_numeric(div_actual - pd.Series(division_targets)).apply(lambda x: f"{x:+.2%}")
-
+    
+            div_prop_df_fmt = div_prop_df.copy()
+            for col in ["Actual", "Target", "Delta"]:
+                div_prop_df_fmt[col] = div_prop_df_fmt[col].apply(lambda x: f"{x:+.2%}" if col == "Delta" else f"{x:.2%}")
+    
             # --- Intra-Division Watch Ratio Summary (as nested tabs) ---
             intra_tabs = {}
             for d_1 in divisions:
@@ -467,28 +486,28 @@ def _(
                     mo.ui.table(summary_df)
                 ])
             intra_division_ratios = mo.ui.tabs(intra_tabs)
-
+    
             # --- Compose all content for this rank ---
             tab_dict[rank_1] = mo.vstack([
                 mo.md(f"# {rank_1} Deployment Summary"),
                 summary_table,
-                #download_button,
                 mo.md("## Deployments by Period"),
                 deployments_by_period,
                 mo.md("## Overall Proportions"),
                 mo.md("**Watch Proportions**"),
-                mo.ui.table(watch_prop_df),
+                mo.ui.table(watch_prop_df_fmt),
                 mo.md("**Division Proportions**"),
-                mo.ui.table(div_prop_df),
+                mo.ui.table(div_prop_df_fmt),
                 mo.md("## Intra-Division Watch Ratio Summary"),
                 intra_division_ratios
             ])
-
+    
         mo.output.clear()
         mo.output.append(mo.ui.tabs(tab_dict))
     else:
         mo.output.clear()
         mo.output.append(mo.md('No optimal solution found. Try increasing TOLERANCE.'))
+
     return (results_df,)
 
 
@@ -501,21 +520,21 @@ def _(mo):
 @app.cell
 def _(
     OUTPUT_FILE_DIR,
+    cp_model,
     mo,
-    model,
     ordered_divisions,
     ordered_watches,
     os,
     pd,
     periods,
-    pulp,
     ranks,
     results_df,
+    status,
 ):
     from openpyxl import load_workbook
     from openpyxl.styles import Font, PatternFill, Alignment
 
-    if pulp.LpStatus[model.status] == "Optimal":
+    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
         output_file_name = "deployment_report.xlsx"
         output_excel = os.path.join(OUTPUT_FILE_DIR, output_file_name)
         with pd.ExcelWriter(output_excel, engine="openpyxl") as _writer:

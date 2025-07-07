@@ -192,20 +192,32 @@ def _(FILE_DIR, Path, file_browser, file_uploader, io, mo, pd):
 @app.cell
 def _(mo):
     # Tolerance for overall ratio constraints (in %)
-    TOLERANCE = mo.ui.number(
+    TOLERANCE_DIV = mo.ui.number(
         start=0,
-        stop=10,
-        step=0.1,
-        value=0,
-        label="Tolerance for overall ratio constraints (in %)",
+        stop=100,
+        step=1,
+        value=1,
+        label="Tolerance for overall division ratio constraints (in %)",
     )
-    TOLERANCE
-    return (TOLERANCE,)
+
+
+    TOLERANCE_WATCH = mo.ui.number(
+        start=0,
+        stop=100,
+        step=1,
+        value=0,
+        label="Tolerance for overall watch ratio constraints (in %)",
+    )
+
+    mo.vstack(items=[TOLERANCE_DIV, TOLERANCE_WATCH])
+
+    return TOLERANCE_DIV, TOLERANCE_WATCH
 
 
 @app.cell
 def _(
-    TOLERANCE,
+    TOLERANCE_DIV,
+    TOLERANCE_WATCH,
     division_targets,
     divisions,
     periods,
@@ -258,19 +270,19 @@ def _(
             total_rank = periods_df[rank].sum()
             for w in watches:
                 target = watch_targets[w] * total_rank
-                tol = max(1, int(round(TOLERANCE.value * total_rank)))
+                tol = int(round(TOLERANCE_DIV.value * total_rank))
                 actual = pulp.lpSum((x[rank, w, d, p] for d in divisions for p in periods))
-                model += (actual >= target - tol * 0.01, f'WatchLow_{rank}_{w}')
-                model += (actual <= target + tol * 0.01, f'WatchHigh_{rank}_{w}')
+                model += (actual >= target - (tol * 0.01), f'WatchLow_{rank}_{w}')
+                model += (actual <= target + (tol * 0.01), f'WatchHigh_{rank}_{w}')
 
         for rank in ranks:
             total_rank = periods_df[rank].sum()
             for d in divisions:
                 target = division_targets[d] * total_rank
-                tol = max(1, int(round(TOLERANCE.value * total_rank)))
+                tol = int(round(TOLERANCE_WATCH.value * total_rank))
                 actual = pulp.lpSum((x[rank, w, d, p] for w in watches for p in periods))
-                model += (actual >= target - tol, f'DivLow_{rank}_{d}')
-                model += (actual <= target + tol, f'DivHigh_{rank}_{d}')
+                model += (actual >= target - (tol * 0.01), f'DivLow_{rank}_{d}')
+                model += (actual <= target + (tol * 0.01), f'DivHigh_{rank}_{d}')
 
         for rank in ranks:
             for p in periods:

@@ -367,16 +367,6 @@ def _(df_input, division_selector):
 
 
 @app.cell
-def _():
-    HOUR_SCALE = 2  # half-hour
-    def scale(x):
-        return int(round(x * HOUR_SCALE))
-    def unscale(x):
-        return x / HOUR_SCALE
-    return scale, unscale
-
-
-@app.cell
 def _(
     allow_double_nights_checkbox,
     allow_triple_nights_checkbox,
@@ -400,10 +390,8 @@ def _(
     r7_consistency_slider,
     r8_balance_slider,
     run_button,
-    scale,
     set_solving,
     timedelta,
-    unscale,
 ):
     # cell 5: Core Solver Logic (Optimized)
     # ------------------------------------------------------------------------
@@ -424,7 +412,6 @@ def _(
         and df_shifts is not None
         and number_of_amb_input.value > 0
     ):
-
         try:
             set_solving(True)
             mo.output.replace(mo.md("🔄 **Solving with optimized logic...**"))
@@ -434,17 +421,15 @@ def _(
             _shifts = df_shifts["Shift"].tolist() + ["O"]
             _ambulances = list(range(1, number_of_amb_input.value + 1))
             _num_ambulances = len(_ambulances)
-            # All deltas and bases must be scaled into the model.
             _shift_attrs = {
                 row["Shift"]: {
                     "type": row["Type"],
                     "flexible": row["Flexible"],
-                    "delta": scale(row["Working_Hour_Delta"]),
-                    "base_hours": scale(row["Working_Hour"]),
+                    "delta": row["Working_Hour_Delta"],
+                    "base_hours": row["Working_Hour"],
                 }
                 for _, row in df_shifts.iterrows()
             }
-
             _shift_attrs["O"] = {
                 "type": "O",
                 "flexible": False,
@@ -455,24 +440,9 @@ def _(
                 (_row[col_date], _row["Shift"]): _row["DAA"]
                 for _, _row in df_input_filtered.iterrows()
             }
-            # week starts on monday:
-            # typical calendar day
-            """
             _weeks = defaultdict(list)
             for _d in _dates:
                 _weeks[_d - timedelta(days=_d.weekday())].append(_d)
-            """
-        
-            # week starts on the earliest date in _dates
-            # rolling 7-day fixed window schedule
-            _weeks = defaultdict(list)
-            if _dates:
-                _start_date = _dates[0]
-                for _d in _dates:
-                    # Compute which week this date belongs to
-                    _week_index = (_d - _start_date).days // 7
-                    _week_start = _start_date + timedelta(days=_week_index * 7)
-                    _weeks[_week_start].append(_d)
 
             # === MODEL CREATION ===
             _model = cp_model.CpModel()
@@ -482,7 +452,6 @@ def _(
                 for _a in _ambulances
                 for _s in _shifts
             }
-            # no need scale() the range is already using the scaled delta from above
             _hour_adjust = {
                 (_d, _a, _s): (
                     _model.NewIntVar(
@@ -609,9 +578,7 @@ def _(
                 for _a in _ambulances:
                     for _s in _shifts:
                         if (_d, _a, _s) in _assign:
-                            # scale() needed
-                            _actual_hours_var = _model.NewIntVar(0, scale(24), f"hours_{_a}_{_d}_{_s}")
-
+                            _actual_hours_var = _model.NewIntVar(0, 24, f"hours_{_a}_{_d}_{_s}")
                             _model.Add(_actual_hours_var == 0).OnlyEnforceIf(_assign[(_d, _a, _s)].Not())
                             _model.Add(
                                 _actual_hours_var == _shift_attrs[_s]["base_hours"] + _hour_adjust[(_d, _a, _s)]
@@ -627,11 +594,10 @@ def _(
                         for _d in _dates for _s in _shifts
                         if (_d, _a, _s) in _actual_hours_vars
                     ]
-                    # scale() the constraint bounds
                     if r4_leq_checkbox.value:
-                        _model.Add(sum(_total_hours_expr) <= scale(48) * num_weeks)
+                        _model.Add(sum(_total_hours_expr) <= 48 * num_weeks)
                     else:
-                        _model.Add(sum(_total_hours_expr) == scale(48) * num_weeks)
+                        _model.Add(sum(_total_hours_expr) == 48 * num_weeks)
             else:
                 # Per-week mode: each week must be ≤ 48 if relaxed, else ==
                 for _week_start, _week_dates in _weeks.items():
@@ -641,11 +607,10 @@ def _(
                             for _d in _week_dates for _s in _shifts
                             if (_d, _a, _s) in _actual_hours_vars
                         ]
-                        # scale() the constraint bounds
                         if r4_leq_checkbox.value:
-                            _model.Add(sum(_weekly_hours_expr) <= scale(48))
+                            _model.Add(sum(_weekly_hours_expr) <= 48)
                         else:
-                            _model.Add(sum(_weekly_hours_expr) == scale(48))
+                            _model.Add(sum(_weekly_hours_expr) == 48)
 
 
             # === SOFT CONSTRAINTS (R5, R6, R7, R8) ===
@@ -745,7 +710,7 @@ def _(
             # === R8
             if r8_balance_slider is not None:
                 num_weeks = len(_weeks)
-                max_total_hours = scale(48) * num_weeks
+                max_total_hours = 48 * num_weeks
 
                 # For each ambulance, create IntVars for total hours and hours under max
                 total_hours_vars = []
@@ -829,39 +794,29 @@ def _(
                         for _s in _shifts:
                             if _solver.Value(_assign[(_d, _a, _s)]):
                                 _adjustment = (
-                                    unscale(_solver.Value(_hour_adjust[(_d, _a, _s)]))
+                                    _solver.Value(_hour_adjust[(_d, _a, _s)])
                                     if _shift_attrs[_s]["flexible"]
                                     else 0
                                 )
                                 _actual_hours = (
-                                    unscale(_shift_attrs[_s]["base_hours"]) + _adjustment
+                                    _shift_attrs[_s]["base_hours"] + _adjustment
                                 )
                                 _schedule_data.append(
                                     {
                                         "Date": _d,
                                         "Ambulance": f"A{_a:03d}",
                                         "Shift": _s,
-                                        "Base_Hours": unscale(_shift_attrs[_s][
+                                        "Base_Hours": _shift_attrs[_s][
                                             "base_hours"
-                                        ]),
+                                        ],
                                         "Hour_Adjustment": _adjustment,
                                         "Actual_Hours": _actual_hours,
                                     }
                                 )
                 df_schedule = pd.DataFrame(_schedule_data)
-                # Typical week starts on Monday
-                """ 
                 df_schedule["WeekStart"] = df_schedule["Date"].apply(
                     lambda x: x - timedelta(days=x.weekday())
                 )
-                """
-                # Rolling 7-day 
-                if not df_schedule.empty:
-                    _start_date = min(df_schedule["Date"])
-                    df_schedule["WeekStart"] = df_schedule["Date"].apply(
-                        lambda x: _start_date + timedelta(days=((x - _start_date).days // 7) * 7)
-                    )
-            
                 _weekly_totals = df_schedule.groupby(["WeekStart", "Ambulance"])[
                     "Actual_Hours"
                 ].sum()

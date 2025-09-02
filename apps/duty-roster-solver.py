@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.14.10"
+__generated_with = "0.15.2"
 app = marimo.App(width="medium")
 
 
@@ -28,27 +28,27 @@ def _(mo):
 
     ## **Hard Requirements**
 
-        *   **R1: Exactly Meet Demand**
+        *   **H1: Exactly Meet Demand**
             The number of scheduled ambulances for each shift (`H`, `N`, `Dv`, etc.) must be *exactly equal* to the DAA specified in the `INPUT` sheet.
 
-        *   **R2: One Shift Per Day**
+        *   **H2: One Shift Per Day**
             Each ambulance must be assigned exactly one shift per day (this includes rest shifts like 'O').
 
-        *   **R3: Night Shift Rest**
+        *   **H3: Night Shift Rest**
             An ambulance that works a night shift (`Type` 'N') *must* be assigned an "Off" shift ('O') on the immediately following day.
 
-        *   **R4: 48-Hour Work Week**
+        *   **H4: 48-Hour Work Week**
             Each ambulance must work either (i) **exactly 48 hours** or (ii) an **average of 48 hours** per week (Monday to Sunday). The solver is allowed to use the flexibility of `Flexible` shifts (adjusting their hours within the `Working_Hour_Delta`) to achieve this target.
 
     ## **Soft Goals**
 
-        *   **R5: Fairness of Tough Shifts**
+        *   **S1: Fairness of Tough Shifts**
             The total number of "tough" shifts ('H' and 'N') should be distributed as evenly as possible among all ambulances. The solver will strongly penalize imbalance, but perfect equality is not strictly required.
 
-        *   **R6: Consistency of Day Shifts**
+        *   **S2: Consistency of Day Shifts**
             The solver should try to assign as few different types of "D" shifts as possible to the same ambulance. The importance of this goal is controlled by the "D-Shift Consistency Priority" slider in the user interface.
 
-        *   **R7: Consistency of Night Shifts**
+        *   **S3: Consistency of Night Shifts**
             The solver should try to assign as few different types of "N" shifts as possible to the same ambulance. The importance of this goal is controlled by the "N-Shift Consistency Priority" slider in the user interface.
 
     ///
@@ -242,42 +242,47 @@ def _(df_input, mo):
         label="🚀 Generate Schedule", disabled=get_solving()
     )
 
-    r5_fairness_checkbox = mo.ui.checkbox(
+    S1_fairness_checkbox = mo.ui.checkbox(
         value=True,
-        label="Enable Tough Shift Fairness (R5) Priority:",
+        label="Enable Tough Shift Fairness (S1) Priority:",
     )
     # --- Priority Sliders for Soft Constraints ---
-    r5_fairness_slider = mo.ui.slider(
-        1, 200, value=150, label="Tough Shift Fairness (R5) Priority"
+    S1_fairness_slider = mo.ui.slider(
+        1, 200, value=150, label="Tough Shift Fairness (S1) Priority"
     )
 
-    r6_consistency_checkbox = mo.ui.checkbox(
+    S2_consistency_checkbox = mo.ui.checkbox(
         value=True,
-        label="Enable D-Shift Consistency (R6) Priority",
+        label="Enable D-Shift Consistency (S2) Priority",
     )
-    r6_consistency_slider = mo.ui.slider(
-        1, 50, value=35, label="D-Shift Consistency (R6) Priority:"
+    S2_consistency_slider = mo.ui.slider(
+        1, 50, value=35, label="D-Shift Consistency (S2) Priority:"
     )
 
-    r7_consistency_checkbox = mo.ui.checkbox(
+    S3_consistency_checkbox = mo.ui.checkbox(
         value=True,
-        label="Enable N-Shift Consistency (R7) Priority",
+        label="Enable N-Shift Consistency (S3) Priority",
     )
-    r7_consistency_slider = mo.ui.slider(
+    S3_consistency_slider = mo.ui.slider(
         1,
         50,
         value=10,  # Very low default value
-        label="N-Shift Consistency (R7) Priority:",
+        label="N-Shift Consistency (S3) Priority:",
     )
-    r8_balance_slider = mo.ui.slider(
+    S4_balance_slider = mo.ui.slider(
         1,
         200,
         value=150,  # Very low default value
-        label="Hour under Max Fairness (R8) Priority:",
+        label="Hour under Max Fairness (S4) Priority:",
     )
-
-
     return (
+        S1_fairness_checkbox,
+        S1_fairness_slider,
+        S2_consistency_checkbox,
+        S2_consistency_slider,
+        S3_consistency_checkbox,
+        S3_consistency_slider,
+        S4_balance_slider,
         allow_double_nights_checkbox,
         allow_triple_nights_checkbox,
         division_selector,
@@ -285,13 +290,6 @@ def _(df_input, mo):
         number_of_amb_input,
         r4_average_checkbox,
         r4_leq_checkbox,
-        r5_fairness_checkbox,
-        r5_fairness_slider,
-        r6_consistency_checkbox,
-        r6_consistency_slider,
-        r7_consistency_checkbox,
-        r7_consistency_slider,
-        r8_balance_slider,
         run_button,
         set_solving,
     )
@@ -299,6 +297,13 @@ def _(df_input, mo):
 
 @app.cell(hide_code=True)
 def _(
+    S1_fairness_checkbox,
+    S1_fairness_slider,
+    S2_consistency_checkbox,
+    S2_consistency_slider,
+    S3_consistency_checkbox,
+    S3_consistency_slider,
+    S4_balance_slider,
     allow_double_nights_checkbox,
     allow_triple_nights_checkbox,
     df_input,
@@ -309,13 +314,6 @@ def _(
     number_of_amb_input,
     r4_average_checkbox,
     r4_leq_checkbox,
-    r5_fairness_checkbox,
-    r5_fairness_slider,
-    r6_consistency_checkbox,
-    r6_consistency_slider,
-    r7_consistency_checkbox,
-    r7_consistency_slider,
-    r8_balance_slider,
     run_button,
 ):
     # Compose the controls stack
@@ -328,17 +326,17 @@ def _(
     controls_list.append(r4_leq_checkbox)
     controls_list.append(allow_double_nights_checkbox)
     controls_list.append(allow_triple_nights_checkbox)
-    controls_list.append(r5_fairness_checkbox)
-    if r5_fairness_checkbox.value:
-        controls_list.append(r5_fairness_slider)
-    controls_list.append(r6_consistency_checkbox)
-    if r6_consistency_checkbox.value:
-        controls_list.append(r6_consistency_slider)
-    controls_list.append(r7_consistency_checkbox)
-    if r7_consistency_checkbox.value:
-        controls_list.append(r7_consistency_slider)
+    controls_list.append(S1_fairness_checkbox)
+    if S1_fairness_checkbox.value:
+        controls_list.append(S1_fairness_slider)
+    controls_list.append(S2_consistency_checkbox)
+    if S2_consistency_checkbox.value:
+        controls_list.append(S2_consistency_slider)
+    controls_list.append(S3_consistency_checkbox)
+    if S3_consistency_checkbox.value:
+        controls_list.append(S3_consistency_slider)
     if r4_leq_checkbox.value:
-        controls_list.append(r8_balance_slider)
+        controls_list.append(S4_balance_slider)
 
 
     if df_input is not None and df_shifts is not None:
@@ -378,6 +376,13 @@ def _():
 
 @app.cell
 def _(
+    S1_fairness_checkbox,
+    S1_fairness_slider,
+    S2_consistency_checkbox,
+    S2_consistency_slider,
+    S3_consistency_checkbox,
+    S3_consistency_slider,
+    S4_balance_slider,
     allow_double_nights_checkbox,
     allow_triple_nights_checkbox,
     col_date,
@@ -392,13 +397,6 @@ def _(
     pd,
     r4_average_checkbox,
     r4_leq_checkbox,
-    r5_fairness_checkbox,
-    r5_fairness_slider,
-    r6_consistency_checkbox,
-    r6_consistency_slider,
-    r7_consistency_checkbox,
-    r7_consistency_slider,
-    r8_balance_slider,
     run_button,
     scale,
     set_solving,
@@ -408,12 +406,12 @@ def _(
     # cell 5: Core Solver Logic (Optimized)
     # ------------------------------------------------------------------------
     # OPTIMIZATIONS APPLIED:
-    # - R5 fairness uses squared deviation (faster for CP-SAT than abs deviation)
+    # - S1 fairness uses squared deviation (faster for CP-SAT than abs deviation)
     # - Tight bounds and AddHint for fairness variables
     # - Decision strategy: assign variables in fixed order (CHOOSE_FIRST, SELECT_MIN_VALUE)
     # - Parallel search: num_search_workers=4 (uses 4 CPU cores)
     # - Configurable double nights (R3) with correct "O" after double "N"
-    # - R5, R6, R7 soft constraints
+    # - S1, S2, S3 soft constraints
     # - Problem complexity display and infeasibility reason reporting
     # ------------------------------------------------------------------------
 
@@ -462,7 +460,7 @@ def _(
             for _d in _dates:
                 _weeks[_d - timedelta(days=_d.weekday())].append(_d)
             """
-        
+
             # week starts on the earliest date in _dates
             # rolling 7-day fixed window schedule
             _weeks = defaultdict(list)
@@ -473,6 +471,31 @@ def _(
                     _week_index = (_d - _start_date).days // 7
                     _week_start = _start_date + timedelta(days=_week_index * 7)
                     _weeks[_week_start].append(_d)
+
+           # NEW: Validation for exactly one pair per day when pair exists
+            _h_names = [row["Shift"] for _, row in df_shifts.iterrows() if row["Shift"].startswith("H")]
+            _n_names = [row["Shift"] for _, row in df_shifts.iterrows() if row["Shift"].startswith("N")]
+
+            def _suffix(name):
+                return name[1:] if len(name) >= 2 else ""
+
+            _h_by_code = { _suffix(h): h for h in _h_names }
+            _n_by_code = { _suffix(n): n for n in _n_names }
+            _hn_pairs = { code: (_h_by_code[code], _n_by_code[code]) for code in set(_h_by_code).intersection(_n_by_code) }
+
+            invalid_inputs = []
+            for _d in _dates:
+                for _code, (_h, _n) in _hn_pairs.items():
+                    dem_h = _demand.get((_d, _h), 0)
+                    dem_n = _demand.get((_d, _n), 0)
+                    if dem_h > 0 and dem_n > 0:
+                        if dem_h != 1 or dem_n != 1:
+                            invalid_inputs.append(f"Day {_d}: Pair for code '{_code}' must be exactly one (dem_h={dem_h}, dem_n={dem_n}) - multiples or unequals not allowed.")
+            if invalid_inputs:
+                mo.output.replace(mo.md("❌ **Invalid Input:**\n" + "\n".join(invalid_inputs)))
+                set_solving(False)
+                raise ValueError("Invalid hotel pair demands - solving aborted.")
+
 
             # === MODEL CREATION ===
             _model = cp_model.CpModel()
@@ -498,7 +521,7 @@ def _(
                 for _s in _shifts
             }
 
-            # === HARD CONSTRAINTS (R1-R4) ===
+            # === HARD CONSTRAINTS (H1-H4) ===
             for _d in _dates:
                 for _s in _shifts:
                     if _s != "O" and (_d, _s) in _demand:
@@ -520,7 +543,7 @@ def _(
                         sum(_assign[(_d, _a, _s)] for _s in _shifts) == 1
                     )
 
-            # === R3: Night Shift Rest (Configurable Double Nights, Enforce O after double N) ===
+            # === H3: Night Shift Rest (Configurable Double Nights, Enforce O after double N) ===
             n_shift_types = [s for s, attrs in _shift_attrs.items() if attrs["type"] == "N"]
 
             if allow_triple_nights_checkbox.value:
@@ -602,7 +625,7 @@ def _(
                                     _assign[(d1, _a, "O")]
                                 ])
 
-            # === R4 ===#
+            # === H4 ===#
             # Prepare actual_hours_vars for all valid (_d, _a, _s)
             _actual_hours_vars = {}
             for _d in _dates:
@@ -647,12 +670,26 @@ def _(
                         else:
                             _model.Add(sum(_weekly_hours_expr) == scale(48))
 
+            # === H5: Hotel shift pair add up to 24h
+            for _code, (_h, _n) in _hn_pairs.items():
+                if _h not in _shift_attrs or _n not in _shift_attrs:
+                    continue
+                for _d in _dates:
+                    dem_h = _demand.get((_d, _h), 0)
+                    dem_n = _demand.get((_d, _n), 0)
+                    if dem_h > 0 and dem_n > 0:  # Pair exists (validated as exactly one)
+                        # Sum actual hours over all ambulances for _h and _n (only assigned will be non-zero)
+                        sum_h = sum(_actual_hours_vars[(_d, _a, _h)] for _a in _ambulances if (_d, _a, _h) in _actual_hours_vars)
+                        sum_n = sum(_actual_hours_vars[(_d, _a, _n)] for _a in _ambulances if (_d, _a, _n) in _actual_hours_vars)
+                        _model.Add(sum_h + sum_n == scale(24))
 
-            # === SOFT CONSTRAINTS (R5, R6, R7, R8) ===
+
+
+            # === SOFT CONSTRAINTS (S1, S2, S3, S4) ===
             _objective_terms = []
 
-            # R5: Fairness of Tough Shifts (Squared Deviation, Hints, Tight Bounds)
-            if r5_fairness_checkbox:
+            # S1: Fairness of Tough Shifts (Squared Deviation, Hints, Tight Bounds)
+            if S1_fairness_checkbox:
                 _tough_shifts = [
                     row["Shift"]
                     for _, row in df_shifts.iterrows()
@@ -695,12 +732,12 @@ def _(
                     fairness_sq_devs.append(_sq_dev)
 
                 _objective_terms.append(
-                    r5_fairness_slider.value * sum(fairness_sq_devs)
+                    S1_fairness_slider.value * sum(fairness_sq_devs)
                 )
 
-            # R6: Consistency of Day Shifts (Soft)
+            # S2: Consistency of Day Shifts (Soft)
 
-            if r6_consistency_checkbox and r6_consistency_slider is not None:
+            if S2_consistency_checkbox and S2_consistency_slider is not None:
                 for _a in _ambulances:
                     _d_shifts_for_this_amb = []
                     for _d_shift in [
@@ -717,12 +754,12 @@ def _(
                         ).OnlyEnforceIf(_is_used.Not())
                         _d_shifts_for_this_amb.append(_is_used)
                     _objective_terms.append(
-                        r6_consistency_slider.value
+                        S2_consistency_slider.value
                         * (sum(_d_shifts_for_this_amb) - 1)
                     )
 
-            # R7: Consistency of N Shifts (Soft)
-            if r7_consistency_checkbox and r7_consistency_slider is not None:
+            # S3: Consistency of N Shifts (Soft)
+            if S3_consistency_checkbox and S3_consistency_slider is not None:
                 n_shift_types = [
                     s for s, attrs in _shift_attrs.items() if attrs["type"] == "N"
                 ]
@@ -738,12 +775,12 @@ def _(
                         ).OnlyEnforceIf(_is_used.Not())
                         n_shifts_for_this_amb.append(_is_used)
                     _objective_terms.append(
-                        r7_consistency_slider.value
+                        S3_consistency_slider.value
                         * (sum(n_shifts_for_this_amb) - 1)
                     )
 
-            # === R8
-            if r8_balance_slider is not None:
+            # === S4
+            if S4_balance_slider is not None:
                 num_weeks = len(_weeks)
                 max_total_hours = scale(48) * num_weeks
 
@@ -771,16 +808,16 @@ def _(
                 _model.AddDivisionEquality(mean_hours_under_max, total_under_max, _num_ambulances)
 
 
-                r8_sq_devs = []
+                S4_sq_devs = []
                 for var in hours_under_max_vars:
                     diff = _model.NewIntVar(-max_total_hours, max_total_hours, f"diff_{var.Name()}")
                     _model.Add(diff == var - mean_hours_under_max)
                     sq_dev = _model.NewIntVar(0, max_total_hours * max_total_hours, f"sq_dev_{var.Name()}")
                     _model.AddMultiplicationEquality(sq_dev, [diff, diff])
-                    r8_sq_devs.append(sq_dev)
+                    S4_sq_devs.append(sq_dev)
 
                 _objective_terms.append(
-                    r8_balance_slider.value * sum(r8_sq_devs)
+                    S4_balance_slider.value * sum(S4_sq_devs)
                 )
 
             # End Soft Constraint
@@ -861,7 +898,7 @@ def _(
                     df_schedule["WeekStart"] = df_schedule["Date"].apply(
                         lambda x: _start_date + timedelta(days=((x - _start_date).days // 7) * 7)
                     )
-            
+
                 _weekly_totals = df_schedule.groupby(["WeekStart", "Ambulance"])[
                     "Actual_Hours"
                 ].sum()

@@ -198,6 +198,10 @@ def _(df_input, mo):
     # Define the state variable to track if the solver is running.
     get_solving, set_solving = mo.state(False)
 
+    timeout_slider = mo.ui.slider(
+        30, 180, value=90, label="Max run time in seconds:"
+    )
+
     number_of_amb_input = mo.ui.number(
         start=1,
         stop=100,
@@ -292,6 +296,7 @@ def _(df_input, mo):
         r4_leq_checkbox,
         run_button,
         set_solving,
+        timeout_slider,
     )
 
 
@@ -315,9 +320,11 @@ def _(
     r4_average_checkbox,
     r4_leq_checkbox,
     run_button,
+    timeout_slider,
 ):
     # Compose the controls stack
-    controls_list = [number_of_amb_input]
+    controls_list = [timeout_slider]
+    controls_list.append(number_of_amb_input)
     if division_selector is not None:
         controls_list.append(division_selector)
     controls_list.append(run_button)
@@ -401,6 +408,7 @@ def _(
     scale,
     set_solving,
     timedelta,
+    timeout_slider,
     unscale,
 ):
     # cell 5: Core Solver Logic (Optimized)
@@ -671,6 +679,7 @@ def _(
                             _model.Add(sum(_weekly_hours_expr) == scale(48))
 
             # === H5: Hotel shift pair add up to 24h
+
             for _code, (_h, _n) in _hn_pairs.items():
                 if _h not in _shift_attrs or _n not in _shift_attrs:
                     continue
@@ -689,11 +698,11 @@ def _(
             _objective_terms = []
 
             # S1: Fairness of Tough Shifts (Squared Deviation, Hints, Tight Bounds)
-            if S1_fairness_checkbox:
+            if S1_fairness_checkbox.value:
                 _tough_shifts = [
                     row["Shift"]
                     for _, row in df_shifts.iterrows()
-                    if row["Type"] == "N"
+                    if row["Type"] in ["H", "N"]  # Revised to include both H and N
                 ]
                 _total_tough_shifts_to_assign = sum(
                     _demand.get((_d, _s), 0) for _d in _dates for _s in _tough_shifts
@@ -730,10 +739,10 @@ def _(
                     )
                     _model.AddMultiplicationEquality(_sq_dev, [_diff, _diff])
                     fairness_sq_devs.append(_sq_dev)
-
                 _objective_terms.append(
                     S1_fairness_slider.value * sum(fairness_sq_devs)
                 )
+
 
             # S2: Consistency of Day Shifts (Soft)
 
@@ -850,7 +859,7 @@ def _(
             if _objective_terms:
                 _model.Minimize(sum(_objective_terms))
             _solver = cp_model.CpSolver()
-            _solver.parameters.max_time_in_seconds = 180.0
+            _solver.parameters.max_time_in_seconds = timeout_slider.value
             _solver.parameters.num_search_workers = (
                 6 
             )

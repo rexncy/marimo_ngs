@@ -17,39 +17,48 @@ def _():
     return Path, cp_model, date, defaultdict, io, mo, pd, timedelta
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(mo):
     mo.md(
         r"""
     /// details | Ambulance Roster Scheduling Solver
 
     # **Solver Objective**
-        To generate a fair and optimal weekly work roster for a fleet of ambulances that strictly adheres to all operational demands and work rules, while strongly optimizing for fairness and shift consistency.
+        To generate a fair and optimal work roster for a fleet of ambulances that strictly adheres to all operational demands and work rules, while strongly optimizing for fairness, shift consistency, and hour balance.
+
 
     ## **Hard Requirements**
 
         *   **H1: Exactly Meet Demand**
-            The number of scheduled ambulances for each shift (`H`, `N`, `Dv`, etc.) must be *exactly equal* to the DAA specified in the `INPUT` sheet.
+        The number of scheduled ambulances for each shift (`H`, `N`, `Dv`, etc.) must be *exactly equal* to the DAA specified in the `INPUT` sheet.
 
         *   **H2: One Shift Per Day**
             Each ambulance must be assigned exactly one shift per day (this includes rest shifts like 'O').
 
         *   **H3: Night Shift Rest**
-            An ambulance that works a night shift (`Type` 'N') *must* be assigned an "Off" shift ('O') on the immediately following day.
+            An ambulance that works a night shift (`Type` 'N') *must* be assigned an "Off" shift ('O') on the immediately following day. This is configurable to allow double or triple nights (with 'O' after), but forbids excessive consecutive nights.
 
         *   **H4: 48-Hour Work Week**
-            Each ambulance must work either (i) **exactly 48 hours** or (ii) an **average of 48 hours** per week (Monday to Sunday). The solver is allowed to use the flexibility of `Flexible` shifts (adjusting their hours within the `Working_Hour_Delta`) to achieve this target.
+            Each ambulance must work either (i) **exactly 48 hours** or (ii) an **average of 48 hours** per week (using rolling 7-day windows from the start date). The solver can use the flexibility of `Flexible` shifts (adjusting their hours within the `Working_Hour_Delta`) to achieve this target. Option to relax to ≤48 if checked.
+
+        *   **H5: Hotel Shift Pair Hours**
+            For each hotel shift pair (H{code} and N{code}, e.g., Hv and Nv) on a day where both have positive demand (validated as exactly 1 each), the actual working hours of the assigned H{code} and N{code} must sum to exactly 24 hours. Ignored for days with only H or only N.
+
 
     ## **Soft Goals**
 
         *   **S1: Fairness of Tough Shifts**
-            The total number of "tough" shifts ('H' and 'N') should be distributed as evenly as possible among all ambulances. The solver will strongly penalize imbalance, but perfect equality is not strictly required.
+        The total number of "tough" shifts ('H' and 'N') should be distributed as evenly as possible among all ambulances. The solver will strongly penalize imbalance using squared deviation, but perfect equality is not strictly required. Enabled via checkbox.
 
         *   **S2: Consistency of Day Shifts**
-            The solver should try to assign as few different types of "D" shifts as possible to the same ambulance. The importance of this goal is controlled by the "D-Shift Consistency Priority" slider in the user interface.
+            The solver minimizes how many different “D-type families” each ambulance works, where a family is defined by the base event code ignoring variant suffixes. Any D shift that shares the same base code is considered the same type (e.g., Dtri, Dtri_2, Dtri-4, Dtri-15 all belong to one family “Dtri”).
 
         *   **S3: Consistency of Night Shifts**
-            The solver should try to assign as few different types of "N" shifts as possible to the same ambulance. The importance of this goal is controlled by the "N-Shift Consistency Priority" slider in the user interface.
+            The solver minimizes how many different “N-type families” each ambulance works, using the same family logic. Any N shift that shares the same base code is one family (e.g., Ntri, Ntri_2, Ntri-4, Ntri-15 are one family “Ntri”).
+
+        *   **S4: Balance of Working Hours**
+            Minimize the variance in hours under the maximum total (48 hours per week times number of weeks) across ambulances, promoting even distribution of under-hours. The importance is controlled by the "Balance Priority" slider.
+
 
     ///
     """
@@ -194,7 +203,7 @@ def _(df_input, df_shifts, mo):
 
 @app.cell(hide_code=True)
 def _(df_input, mo):
-    # cell 4: Solver Settings
+    # Solver Settings
     # Define the state variable to track if the solver is running.
     get_solving, set_solving = mo.state(False)
 
@@ -252,7 +261,7 @@ def _(df_input, mo):
     )
     # --- Priority Sliders for Soft Constraints ---
     S1_fairness_slider = mo.ui.slider(
-        1, 200, value=150, label="Tough Shift Fairness (S1) Priority"
+        1, 200, value=200, label="Tough Shift Fairness (S1) Priority"
     )
 
     S2_consistency_checkbox = mo.ui.checkbox(
@@ -260,7 +269,7 @@ def _(df_input, mo):
         label="Enable D-Shift Consistency (S2) Priority",
     )
     S2_consistency_slider = mo.ui.slider(
-        1, 50, value=35, label="D-Shift Consistency (S2) Priority:"
+        1, 200, value=150, label="D-Shift Consistency (S2) Priority:"
     )
 
     S3_consistency_checkbox = mo.ui.checkbox(
@@ -269,14 +278,14 @@ def _(df_input, mo):
     )
     S3_consistency_slider = mo.ui.slider(
         1,
-        50,
-        value=10,  # Very low default value
+        200,
+        value=1, 
         label="N-Shift Consistency (S3) Priority:",
     )
     S4_balance_slider = mo.ui.slider(
         1,
         200,
-        value=150,  # Very low default value
+        value=150,  
         label="Hour under Max Fairness (S4) Priority:",
     )
     return (
@@ -411,7 +420,7 @@ def _(
     timeout_slider,
     unscale,
 ):
-    # cell 5: Core Solver Logic (Optimized)
+    # Core Solver Logic (Optimized)
     # ------------------------------------------------------------------------
     # OPTIMIZATIONS APPLIED:
     # - S1 fairness uses squared deviation (faster for CP-SAT than abs deviation)
@@ -697,95 +706,127 @@ def _(
             # === SOFT CONSTRAINTS (S1, S2, S3, S4) ===
             _objective_terms = []
 
-            # S1: Fairness of Tough Shifts (Squared Deviation, Hints, Tight Bounds)
+            # S1: Fairness of H and N Shifts (split penalties, squared deviation)
             if S1_fairness_checkbox.value:
-                _tough_shifts = [
-                    row["Shift"]
-                    for _, row in df_shifts.iterrows()
-                    if row["Type"] in ["H", "N"]  # Revised to include both H and N
-                ]
-                _total_tough_shifts_to_assign = sum(
-                    _demand.get((_d, _s), 0) for _d in _dates for _s in _tough_shifts
-                )
-                min_tough = _total_tough_shifts_to_assign // _num_ambulances
-                max_tough = (
-                    min_tough + 1
-                    if _total_tough_shifts_to_assign % _num_ambulances
-                    else min_tough
-                )
-                _tough_shift_counts = [
-                    _model.NewIntVar(min_tough, max_tough, f"tough_count_{_a}")
-                    for _a in _ambulances
-                ]
-                for _a_idx, _a in enumerate(_ambulances):
-                    _model.Add(
-                        _tough_shift_counts[_a_idx]
-                        == sum(
-                            _assign[(_d, _a, _s)]
-                            for _d in _dates
-                            for _s in _tough_shifts
+                # Collect H-only and N-only shift lists from the catalog
+                _h_shifts = [row["Shift"] for _, row in df_shifts.iterrows() if row["Type"] == "H"]
+                _n_shifts = [row["Shift"] for _, row in df_shifts.iterrows() if row["Type"] == "N"]
+        
+                # Helper to build squared-deviation penalty for a category
+                def _add_split_fairness_penalty(category_name, cat_shifts, weight):
+                    # Count total category shifts to assign
+                    total_cat = sum(_demand.get((_d, _s), 0) for _d in _dates for _s in cat_shifts)
+                    if total_cat == 0 or weight is None or weight == 0:
+                        return  # nothing to balance
+        
+                    # Per-ambulance count vars: how many H (or N) shifts assigned
+                    cat_counts = [
+                        _model.NewIntVar(0, total_cat, f"{category_name}_count_{_a}")
+                        for _a in _ambulances
+                    ]
+                    for _a_idx, _a in enumerate(_ambulances):
+                        _model.Add(
+                            cat_counts[_a_idx]
+                            == sum(_assign[(_d, _a, _s)]
+                                   for _d in _dates
+                                   for _s in cat_shifts)
                         )
-                    )
-                for _count_var in _tough_shift_counts:
-                    _model.AddHint(_count_var, min_tough)
-                fairness_sq_devs = []
-                for _count_var in _tough_shift_counts:
-                    _diff = _model.NewIntVar(
-                        -max_tough, max_tough, f"diff_{_count_var.Name()}"
-                    )
-                    _model.Add(_diff == _count_var - min_tough)
-                    _sq_dev = _model.NewIntVar(
-                        0, max_tough * max_tough, f"sq_dev_{_count_var.Name()}"
-                    )
-                    _model.AddMultiplicationEquality(_sq_dev, [_diff, _diff])
-                    fairness_sq_devs.append(_sq_dev)
-                _objective_terms.append(
-                    S1_fairness_slider.value * sum(fairness_sq_devs)
-                )
+        
+                    # Nominal floor target and squared deviations from floor
+                    floor_target = total_cat // _num_ambulances
+                    # Deviations are modeled from the floor; values at floor have zero penalty
+                    sq_devs = []
+                    for cvar in cat_counts:
+                        diff = _model.NewIntVar(-total_cat, total_cat, f"{category_name}_diff_{cvar.Name()}")
+                        _model.Add(diff == cvar - floor_target)
+                        sq = _model.NewIntVar(0, total_cat * total_cat, f"{category_name}_sq_{cvar.Name()}")
+                        _model.AddMultiplicationEquality(sq, [diff, diff])
+                        sq_devs.append(sq)
+        
+                    _objective_terms.append(weight * sum(sq_devs))
+        
+                # Two independent penalties with a shared slider or separate weights if you prefer
+                _add_split_fairness_penalty("H", _h_shifts, S1_fairness_slider.value)
+                _add_split_fairness_penalty("N", _n_shifts, S1_fairness_slider.value)
 
 
-            # S2: Consistency of Day Shifts (Soft)
 
+            # Helper for S2 and S3: canonical family key for D/N shifts
+            def _family_key(shift_name: str) -> str:
+                # Expect names like Dxxx, Nxxx possibly followed by _... or -...
+                if not shift_name or shift_name[0] not in ("D", "N"):
+                    return shift_name  # leave others unchanged
+                prefix = shift_name[0]
+                rest = shift_name[1:]
+                # Truncate at first '_' or '-' if present
+                cut = len(rest)
+                for sep in ("_", "-"):
+                    i = rest.find(sep)
+                    if i != -1:
+                        cut = min(cut, i)
+                base = rest[:cut]
+                return prefix + base
+
+            # Preparation for S2 and S3
+            # Build D and N families from catalog
+            _d_families = {}
+            _n_families = {}
+            for s, attrs in _shift_attrs.items():
+                if s == "O":
+                    continue
+                if attrs["type"] == "D" and not s.startswith("H"):
+                    key = _family_key(s)
+                    _d_families.setdefault(key, []).append(s)
+                elif attrs["type"] == "N":
+                    key = _family_key(s)
+                    _n_families.setdefault(key, []).append(s)
+                
+            # S2: Consistency of Day Shifts (by D-family)
             if S2_consistency_checkbox and S2_consistency_slider is not None:
                 for _a in _ambulances:
-                    _d_shifts_for_this_amb = []
-                    for _d_shift in [
-                        s
-                        for s, attrs in _shift_attrs.items()
-                        if attrs["type"] == "D"
-                    ]:
-                        _is_used = _model.NewBoolVar(f"used_{_a}_{_d_shift}")
+                    _d_family_used_flags = []
+                    for fam_key, member_shifts in _d_families.items():
+                        used = _model.NewBoolVar(f"usedDfamily_{_a}_{fam_key}")
+                        # used == 1 iff any member shift from that family is assigned at least once to this ambulance over all days
                         _model.Add(
-                            sum(_assign[(_d, _a, _d_shift)] for _d in _dates) > 0
-                        ).OnlyEnforceIf(_is_used)
+                            sum(_assign[(_d, _a, s)]
+                                for _d in _dates
+                                for s in member_shifts
+                                if (_d, _a, s) in _assign) > 0
+                        ).OnlyEnforceIf(used)
                         _model.Add(
-                            sum(_assign[(_d, _a, _d_shift)] for _d in _dates) == 0
-                        ).OnlyEnforceIf(_is_used.Not())
-                        _d_shifts_for_this_amb.append(_is_used)
+                            sum(_assign[(_d, _a, s)]
+                                for _d in _dates
+                                for s in member_shifts
+                                if (_d, _a, s) in _assign) == 0
+                        ).OnlyEnforceIf(used.Not())
+                        _d_family_used_flags.append(used)
+                    # Penalize number of used families beyond 1
                     _objective_terms.append(
-                        S2_consistency_slider.value
-                        * (sum(_d_shifts_for_this_amb) - 1)
+                        S2_consistency_slider.value * (sum(_d_family_used_flags) - 1)
                     )
-
-            # S3: Consistency of N Shifts (Soft)
+        
+            # S3: Consistency of Night Shifts (by N-family)
             if S3_consistency_checkbox and S3_consistency_slider is not None:
-                n_shift_types = [
-                    s for s, attrs in _shift_attrs.items() if attrs["type"] == "N"
-                ]
                 for _a in _ambulances:
-                    n_shifts_for_this_amb = []
-                    for n_shift in n_shift_types:
-                        _is_used = _model.NewBoolVar(f"usedN_{_a}_{n_shift}")
+                    _n_family_used_flags = []
+                    for fam_key, member_shifts in _n_families.items():
+                        used = _model.NewBoolVar(f"usedNfamily_{_a}_{fam_key}")
                         _model.Add(
-                            sum(_assign[(_d, _a, n_shift)] for _d in _dates) > 0
-                        ).OnlyEnforceIf(_is_used)
+                            sum(_assign[(_d, _a, s)]
+                                for _d in _dates
+                                for s in member_shifts
+                                if (_d, _a, s) in _assign) > 0
+                        ).OnlyEnforceIf(used)
                         _model.Add(
-                            sum(_assign[(_d, _a, n_shift)] for _d in _dates) == 0
-                        ).OnlyEnforceIf(_is_used.Not())
-                        n_shifts_for_this_amb.append(_is_used)
+                            sum(_assign[(_d, _a, s)]
+                                for _d in _dates
+                                for s in member_shifts
+                                if (_d, _a, s) in _assign) == 0
+                        ).OnlyEnforceIf(used.Not())
+                        _n_family_used_flags.append(used)
                     _objective_terms.append(
-                        S3_consistency_slider.value
-                        * (sum(n_shifts_for_this_amb) - 1)
+                        S3_consistency_slider.value * (sum(_n_family_used_flags) - 1)
                     )
 
             # === S4
@@ -951,7 +992,7 @@ def _(
 
 @app.cell
 def _(date, df_schedule, df_shifts, mo, pd, timedelta):
-    # cell 6: Calendar View (Revised: Night Shifts, Tabs)
+    # Calendar View (Revised: Night Shifts, Tabs)
     if df_schedule is not None and not df_schedule.empty:
         # Dynamically determine all shift codes of type "N" from the SHIFTS sheet
         night_shift_types = [
@@ -1014,7 +1055,7 @@ def _(date, df_schedule, df_shifts, mo, pd, timedelta):
 
 @app.cell
 def _(df_input_filtered, df_schedule, mo, pd):
-    # cell 7: DAA Requirement Verification
+    # DAA Requirement Verification
     if (
         df_input_filtered is not None
         and df_schedule is not None
@@ -1055,6 +1096,30 @@ def _(df_input_filtered, df_schedule, mo, pd):
     else:
         daa_check_view = mo.md("*DAA check will appear after generating schedule*")
     daa_check_view
+    return
+
+
+@app.cell
+def _(df_schedule, mo):
+    if df_schedule is not None and not df_schedule.empty:
+        total_shift_counts = (
+            df_schedule.groupby('Ambulance')
+            .agg(
+                Total_H_Shifts=('Shift', lambda x: (x.str.startswith('H')).sum()),
+                Total_N_Shifts=('Shift', lambda x: (x.str.startswith('N')).sum())
+            )
+            .reset_index()
+        )
+        total_shift_counts_view = mo.vstack(
+            [
+                mo.md("### H&N Shift Counts for Each Ambulance"),
+                mo.ui.table(total_shift_counts)
+            ]
+        )
+    else:
+        total_shift_counts_view = mo.md("*No schedule data available to compute shift counts.*")
+
+    total_shift_counts_view
     return
 
 
@@ -1211,7 +1276,7 @@ def _(
 
 @app.cell
 def _(mo):
-    # cell 9: Complexity Metric Function
+    # Complexity Metric Function
 
 
     def compute_problem_complexity(

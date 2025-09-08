@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.14.10"
+__generated_with = "0.15.2"
 app = marimo.App(width="medium")
 
 
@@ -191,7 +191,7 @@ def _(mo):
     TOLERANCE_DIV = mo.ui.number(
         start=0,
         stop=100,
-        step=0.5,
+        step=0.1,
         value=1,
         label="Tolerance for overall division ratio constraints (in %)",
     )
@@ -200,7 +200,7 @@ def _(mo):
     TOLERANCE_WATCH = mo.ui.number(
         start=0,
         stop=100,
-        step=0.5,
+        step=0.1,
         value=0,
         label="Tolerance for overall watch ratio constraints (in %)",
     )

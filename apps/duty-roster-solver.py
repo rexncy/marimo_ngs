@@ -711,14 +711,14 @@ def _(
                 # Collect H-only and N-only shift lists from the catalog
                 _h_shifts = [row["Shift"] for _, row in df_shifts.iterrows() if row["Type"] == "H"]
                 _n_shifts = [row["Shift"] for _, row in df_shifts.iterrows() if row["Type"] == "N"]
-        
+
                 # Helper to build squared-deviation penalty for a category
                 def _add_split_fairness_penalty(category_name, cat_shifts, weight):
                     # Count total category shifts to assign
                     total_cat = sum(_demand.get((_d, _s), 0) for _d in _dates for _s in cat_shifts)
                     if total_cat == 0 or weight is None or weight == 0:
                         return  # nothing to balance
-        
+
                     # Per-ambulance count vars: how many H (or N) shifts assigned
                     cat_counts = [
                         _model.NewIntVar(0, total_cat, f"{category_name}_count_{_a}")
@@ -731,7 +731,7 @@ def _(
                                    for _d in _dates
                                    for _s in cat_shifts)
                         )
-        
+
                     # Nominal floor target and squared deviations from floor
                     floor_target = total_cat // _num_ambulances
                     # Deviations are modeled from the floor; values at floor have zero penalty
@@ -742,9 +742,9 @@ def _(
                         sq = _model.NewIntVar(0, total_cat * total_cat, f"{category_name}_sq_{cvar.Name()}")
                         _model.AddMultiplicationEquality(sq, [diff, diff])
                         sq_devs.append(sq)
-        
+
                     _objective_terms.append(weight * sum(sq_devs))
-        
+
                 # Two independent penalties with a shared slider or separate weights if you prefer
                 _add_split_fairness_penalty("H", _h_shifts, S1_fairness_slider.value)
                 _add_split_fairness_penalty("N", _n_shifts, S1_fairness_slider.value)
@@ -780,7 +780,7 @@ def _(
                 elif attrs["type"] == "N":
                     key = _family_key(s)
                     _n_families.setdefault(key, []).append(s)
-                
+
             # S2: Consistency of Day Shifts (by D-family)
             if S2_consistency_checkbox and S2_consistency_slider is not None:
                 for _a in _ambulances:
@@ -805,7 +805,7 @@ def _(
                     _objective_terms.append(
                         S2_consistency_slider.value * (sum(_d_family_used_flags) - 1)
                     )
-        
+
             # S3: Consistency of Night Shifts (by N-family)
             if S3_consistency_checkbox and S3_consistency_slider is not None:
                 for _a in _ambulances:
@@ -974,7 +974,30 @@ def _(
                     f"❌ **INFEASIBLE:** No solution exists that satisfies all hard constraints."
                 )
                 df_schedule = None
+    
+        except Exception as e:
+            import traceback,sys
+            # 1) Exception title (type + message)
+            exc_type = type(e).__name__
+            exc_msg = str(e)
+    
+            # 2) Full traceback as formatted string
+            tb = traceback.format_exc()
+    
+            title = "Error"
+            summary = f"- Type: `{exc_type}`\n- Message: `{exc_msg}`\n- Traceback: `{tb}`"
+        
+    
+            red = "#d32f2f"  # Material Red 700 (adjust to preference)
 
+            schedule_result = mo.md(
+                f"<h1 style='margin:0;color:{red};'>{title}</h1>"
+                f"<h3 style='color:{red};'>{exc_type}: {exc_msg}</h3>"
+                "\n\n"
+                f"<h3>Traceback</h3>"
+
+                f"<div><i>{tb}</i></div>"
+            )
         finally:
             set_solving(False)
 
@@ -1325,6 +1348,31 @@ def _(mo):
         - **Soft Constraints:** {num_soft_constraints:,}
         """)
     return (compute_problem_complexity,)
+
+
+@app.cell
+def _(mo):
+    mo.md("### stderr")
+    with mo.redirect_stderr():
+      # This context remains active, redirecting all stderr
+      # from other cells to this cell's output.
+      pass
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md("### stdout")
+    with mo.redirect_stdout():
+      # This context remains active, redirecting all stdout
+      # from other cells to this cell's output.
+      pass
+    return
+
+
+@app.cell
+def _():
+    return
 
 
 if __name__ == "__main__":

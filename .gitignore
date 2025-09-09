@@ -12,3 +12,6 @@ wheels/
 .DS_Store
 
 mount_data/
+apps/files/duty-roster-solver-files/*
+apps/files/ngs-fairness-solver-files/*
+apps/files/ngs-fairness-solver-files-output/*

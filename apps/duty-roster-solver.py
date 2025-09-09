@@ -177,27 +177,56 @@ def _(FILE_DIR, Path, file_browser, file_uploader, io, mo, pd):
 @app.cell(hide_code=True)
 def _(df_input, df_shifts, mo):
     input_error = False
-    if df_input is not None and df_shifts is not None:
-        input_shifts = set(df_input["Shift"].unique())
-        shifts_shifts = set(df_shifts["Shift"].unique())
-        invalid_shifts = input_shifts - shifts_shifts
+    validation_messages = []
 
+    if df_input is not None and df_shifts is not None:
+        # --- 1. Check for invalid shifts in INPUT that are not in SHIFTS ---
+        # Clean shift names by stripping whitespace to prevent mismatches
+        input_shifts = set(df_input["Shift"].str.strip().unique())
+        shifts_defined = set(df_shifts["Shift"].str.strip().unique())
+    
+        invalid_shifts = input_shifts - shifts_defined
         if invalid_shifts:
             input_error = True
-            validation_msg = mo.md(
-                f"❌ **Validation Error:** The following shifts in INPUT are not defined in the SHIFTS sheet: "
+            validation_messages.append(
+                f"❌ **Validation Error:** The following shifts in the INPUT sheet are not defined in the SHIFTS sheet: "
                 f"`{', '.join(sorted(invalid_shifts))}`"
             )
         else:
-            validation_msg = mo.md(
-                "✅ All shift codes in INPUT are valid and defined in the SHIFTS sheet."
+            validation_messages.append(
+                "✅ All shift codes in the INPUT sheet are valid and defined in the SHIFTS sheet."
             )
+
+        # --- 2. NEW: Check for duplicate shift names within the SHIFTS sheet ---
+        # Find all occurrences of shift names that are duplicated
+        duplicates = df_shifts[df_shifts.duplicated(subset=['Shift'], keep=False)]
+    
+        if not duplicates.empty:
+            input_error = True
+            # Get a sorted list of the unique duplicate names to report
+            duplicate_names = sorted(duplicates['Shift'].unique())
+            validation_messages.append(
+                f"❌ **Validation Error:** The following duplicate shift names were found in the SHIFTS sheet: "
+                f"`{', '.join(duplicate_names)}`"
+            )
+            # Optional: Display the full rows of the duplicates for easy debugging
+            # mo.output.append(mo.md("### Duplicate Shift Details:"))
+            # mo.output.append(mo.ui.table(duplicates.sort_values('Shift')))
+        else:
+            validation_messages.append(
+                "✅ No duplicate shift names were found in the SHIFTS sheet."
+            )
+
+        # --- Combine and display all validation messages ---
+        validation_msg = mo.md("\n\n".join(validation_messages))
+
     else:
         validation_msg = mo.md(
             "*Load both INPUT and SHIFTS sheets to validate shift codes.*"
         )
 
     validation_msg
+
     return (input_error,)
 
 
@@ -774,7 +803,7 @@ def _(
             for s, attrs in _shift_attrs.items():
                 if s == "O":
                     continue
-                if attrs["type"] == "D" and not s.startswith("H"):
+                if attrs["type"] == "D":
                     key = _family_key(s)
                     _d_families.setdefault(key, []).append(s)
                 elif attrs["type"] == "N":
@@ -782,7 +811,7 @@ def _(
                     _n_families.setdefault(key, []).append(s)
 
             # S2: Consistency of Day Shifts (by D-family)
-            if S2_consistency_checkbox and S2_consistency_slider is not None:
+            if S2_consistency_checkbox.value and S2_consistency_slider is not None:
                 for _a in _ambulances:
                     _d_family_used_flags = []
                     for fam_key, member_shifts in _d_families.items():
@@ -807,7 +836,7 @@ def _(
                     )
 
             # S3: Consistency of Night Shifts (by N-family)
-            if S3_consistency_checkbox and S3_consistency_slider is not None:
+            if S3_consistency_checkbox.value and S3_consistency_slider is not None:
                 for _a in _ambulances:
                     _n_family_used_flags = []
                     for fam_key, member_shifts in _n_families.items():
@@ -974,20 +1003,20 @@ def _(
                     f"❌ **INFEASIBLE:** No solution exists that satisfies all hard constraints."
                 )
                 df_schedule = None
-    
+
         except Exception as e:
             import traceback,sys
             # 1) Exception title (type + message)
             exc_type = type(e).__name__
             exc_msg = str(e)
-    
+
             # 2) Full traceback as formatted string
             tb = traceback.format_exc()
-    
+
             title = "Error"
             summary = f"- Type: `{exc_type}`\n- Message: `{exc_msg}`\n- Traceback: `{tb}`"
-        
-    
+
+
             red = "#d32f2f"  # Material Red 700 (adjust to preference)
 
             schedule_result = mo.md(
